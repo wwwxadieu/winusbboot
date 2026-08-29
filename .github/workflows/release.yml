@@ -75,9 +75,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="${{ inputs.tag }}"
           [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
-          gh release create "$TAG" --title "$TAG" --generate-notes || true
+
+          cat > notes.md <<NOTES
+          ## Cài đặt
+
+          Tải file \`.exe\` bên dưới rồi chạy. Bộ cài yêu cầu quyền quản trị vì ứng dụng
+          cần chia lại phân vùng ổ USB.
+
+          Đối chiếu mã băm trước khi chạy:
+
+          \`\`\`
+          $(cat src-tauri/target/release/bundle/nsis/SHA256SUMS.txt)
+          \`\`\`
+
+          ## Cần biết trước
+
+          - **Bộ cài chưa được ký số.** Windows SmartScreen sẽ chặn ở lần chạy đầu —
+            bấm "More info" rồi "Run anyway". Mã băm ở trên là cách xác minh file.
+          - **Ứng dụng xoá sạch ổ USB được chọn.** Hãy dùng một ổ không chứa dữ liệu
+            quan trọng cho tới khi bạn tin tưởng nó.
+
+          NOTES
+
+          # Bản 0.x là bản thử: đánh dấu pre-release để không ai vô tình coi nó là
+          # bản ổn định. Bỏ dấu này khi lên 1.0.
+          PRE=""
+          case "$TAG" in v0.*) PRE="--prerelease" ;; esac
+
+          gh release create "$TAG" --title "$TAG" --notes-file notes.md $PRE \
+            || gh release edit "$TAG" --notes-file notes.md $PRE
+
           gh release upload "$TAG" \
             src-tauri/target/release/bundle/nsis/*.exe \
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt \
