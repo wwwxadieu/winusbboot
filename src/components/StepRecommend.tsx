@@ -1,4 +1,6 @@
-import type { Candidate, CatalogOrigin, Recommendation, Verdict } from "../types";
+import type {
+  Candidate, CatalogOrigin, Recommendation, SetupLanguage, Verdict,
+} from "../types";
 import { Empty, Note, Panel } from "./ui";
 
 const ORIGIN_LABEL: Record<CatalogOrigin, string> = {
@@ -101,6 +103,9 @@ export function StepRecommend({
   onRefreshCatalog,
   refreshing,
   onSeeHardware,
+  languages,
+  language,
+  onLanguage,
 }: {
   rec: Recommendation | null;
   loading: boolean;
@@ -109,6 +114,10 @@ export function StepRecommend({
   onRefreshCatalog: () => void;
   refreshing: boolean;
   onSeeHardware: () => void;
+  languages: SetupLanguage[];
+  /** Tên Microsoft của ngôn ngữ đang chọn, vd "English (United States)". */
+  language: string;
+  onLanguage: (ms: string) => void;
 }) {
   if (!rec) {
     return (
@@ -122,6 +131,10 @@ export function StepRecommend({
       </>
     );
   }
+
+  // Chỉ những ngôn ngữ thật sự tải được ISO mới lên danh sách chọn.
+  const isoLangs = languages.filter((l) => !l.region_only);
+  const chosenLang = isoLangs.find((l) => l.ms_name === language);
 
   const top = rec.candidates[0];
   const noteType =
@@ -194,7 +207,34 @@ export function StepRecommend({
         <div className="grid grid--3">
           <div className="stat"><div className="stat__k">Kiến trúc</div><div className="stat__v">{rec.architecture}</div></div>
           <div className="stat"><div className="stat__k">Phiên bản</div><div className="stat__v">{rec.edition_hint}</div></div>
-          <div className="stat"><div className="stat__k">Ngôn ngữ</div><div className="stat__v">{rec.language_hint}</div></div>
+          <div className="stat">
+            <div className="stat__k">Ngôn ngữ bộ cài</div>
+            <div style={{ marginTop: 5 }}>
+              <select
+                className="field"
+                value={language}
+                onChange={(e) => onLanguage(e.target.value)}
+              >
+                {isoLangs.map((l) => (
+                  <option key={l.locale} value={l.ms_name}>{l.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="stat__note">{chosenLang?.locale ?? ""}</div>
+          </div>
+        </div>
+
+        {/* Đây là câu hỏi người dùng Việt Nam nào cũng hỏi, nên trả lời sẵn
+            ngay tại chỗ chọn thay vì để họ đi tìm rồi tự kết luận là app thiếu. */}
+        <div style={{ marginTop: 12 }}>
+          <Note type="info" icon="i" title="Vì sao không có tiếng Việt">
+            Microsoft không phát hành ISO Windows tiếng Việt — trang tải chính thức chưa
+            bao giờ có mục này. Cách làm thông thường là cài một bản ở trên rồi thêm gói
+            ngôn ngữ hiển thị tiếng Việt sau, trong Settings → Time &amp; language.
+            <br />
+            Riêng <b style={{ display: "inline" }}>định dạng ngày tháng, tiền tệ và bàn
+            phím</b> thì vẫn đặt được thành Việt Nam ngay từ đầu — chọn ở bước Ghi bộ cài.
+          </Note>
         </div>
       </Panel>
     </>

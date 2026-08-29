@@ -140,6 +140,22 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
+### Hai mốc thời gian khác nhau khi tải
+
+`.timeout()` của reqwest là hạn chót cho **toàn bộ** request, tính cả thời gian tải hết
+body — không phải timeout kết nối. Dùng chung một client 60 giây cho cả request nhỏ lẫn
+việc tải ISO nghĩa là mọi file đều bị huỷ ở giây thứ 60, vì không file 3–6 GB nào tải xong
+trong ngần ấy thời gian. Đây là lý do tính năng tải tự động chưa bao giờ chạy được, với
+cả Windows lẫn Linux.
+
+Nên có hai client tách bạch: `client()` cho các request nhỏ (trang HTML, file mã băm) giữ
+hạn chót 60 giây, còn `download_client()` bỏ hẳn hạn chót tổng và thay bằng
+`connect_timeout` cho lúc bắt tay và `read_timeout` cho khoảng lặng giữa hai khối dữ liệu.
+Mạng chậm vẫn tải được; kết nối chết thật vẫn bị cắt sau một phút không nhận được gì.
+
+Ba test khoá lại đúng sự khác biệt này, dùng một máy chủ tí hon nhỏ giọt dữ liệu ngay
+trong test — không gọi mạng, chạy hết 3 giây.
+
 ### Link tải Linux tra qua file mã băm
 
 Ứng dụng **không** ghi cứng link ISO của distro. Tên file đổi theo từng bản vá nhỏ —
@@ -171,6 +187,29 @@ Trên Windows, ghi thẳng ra `\\.\PHYSICALDRIVE<n>` cần ba việc đúng th�
 để hệ điều hành nhả khoá volume, đưa ổ về offline để Windows không gắn phân vùng mới vào
 giữa chừng, rồi ghi theo bội số sector (khối cuối được đệm 0 cho tròn).
 
+### Không có Windows tiếng Việt
+
+Microsoft chưa từng phát hành ISO Windows tiếng Việt. Trang tải chính thức không có mục
+nào cho tiếng Việt, và trước đây ứng dụng lại ghi cứng `"Vietnamese"` khi hỏi link tải và
+ghi cứng `"Tiếng Việt (vi-vn)"` ở phần gợi ý — tức là hướng người dùng đi chọn một thứ
+không tồn tại.
+
+Từ đó ra hai khái niệm phải tách bạch, và gộp chúng lại chính là gốc của lỗi:
+
+| | Bị giới hạn bởi gì | Tiếng Việt dùng được không |
+|---|---|---|
+| Ngôn ngữ hiển thị (`UILanguage`) | Những gì nằm trong file ISO | Không |
+| Định dạng vùng, bàn phím (`SystemLocale`, `UserLocale`, `InputLocale`) | Không giới hạn | **Có** |
+
+Nên bước Phiên bản có bộ chọn ngôn ngữ bộ cài — 38 ngôn ngữ Microsoft thật sự phát hành,
+không có tiếng Việt, kèm giải thích ngay tại chỗ. Còn bước Ghi bộ cài thì ngôn ngữ hiển
+thị **khoá theo ISO đã chọn** (không sửa được, vì sửa cũng vô nghĩa), và định dạng vùng
+vẫn chọn được Việt Nam. Đây đúng là thứ người dùng Việt Nam cần: Windows tiếng Anh nhưng
+ngày tháng, tiền tệ và bàn phím theo Việt Nam.
+
+Bảng ngôn ngữ nằm ở `languages.rs` và được đẩy sang giao diện qua một lệnh Tauri, thay vì
+giao diện giữ một bản sao thứ hai rồi lệch dần khỏi bản backend dùng để khớp SKU.
+
 ### Bỏ qua màn hình cài đặt ban đầu
 
 Windows Setup tự tìm file `autounattend.xml` ở thư mục gốc của thiết bị rời. Ứng dụng sinh
@@ -193,6 +232,7 @@ src-tauri/src/
   hardware.rs   Quét CPU/RAM/TPM/Secure Boot/firmware
   cpu.rs        Suy luận CPU có nằm trong danh sách hỗ trợ Windows 11 không
   catalog.rs    Danh mục các bản Windows + tính vòng đời theo ngày hiện tại
+  languages.rs  Ngôn ngữ bộ cài Microsoft phát hành, và locale chỉ dùng cho vùng
   distro.rs     Danh mục hệ điều hành mã nguồn mở + engine chấm điểm theo RAM
   catalog_sync.rs  Đọc bảng vòng đời từ trang release-health của Microsoft
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
@@ -330,8 +370,9 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 92 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
-  `distro.rs`, `download.rs`, `unattend.rs`, `verify.rs`, `writer.rs` — chạy xanh
+- 107 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+  `distro.rs`, `download.rs`, `languages.rs`, `unattend.rs`, `verify.rs`, `writer.rs` —
+  chạy xanh
 - Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
   hiện hành
 - Toàn bộ file Rust qua được kiểm tra cú pháp

@@ -3,7 +3,7 @@ import { api, errorText, events } from "./lib/api";
 import { bytes } from "./lib/format";
 import type {
   BootCheckRequest, DistroRecommendation, FormatResult, HardwareReport, IsoInfo, OsFamily,
-  PartitionScheme, Recommendation, UnattendConfig, UsbDisk,
+  PartitionScheme, Recommendation, SetupLanguage, UnattendConfig, UsbDisk,
 } from "./types";
 import { Titlebar } from "./components/Titlebar";
 import { Note } from "./components/ui";
@@ -53,9 +53,14 @@ function meta(key: StepKey, family: OsFamily | null): { title: string; hint: str
   }
 }
 
+/** Ngôn ngữ hiển thị mặc định — phải là bản Microsoft thật sự phát hành. */
+const DEFAULT_LANGUAGE = "English (United States)";
+
 const DEFAULT_UNATTEND: UnattendConfig = {
   enabled: true,
-  language: "vi-VN",
+  // Hiển thị theo ISO; định dạng vùng thì mặc định Việt Nam.
+  ui_language: "en-US",
+  locale: "vi-VN",
   keyboard: "0409:00000409",
   timezone: "SE Asia Standard Time",
   computer_name: "",
@@ -85,6 +90,9 @@ export default function App() {
   const [distros, setDistros] = useState<DistroRecommendation | null>(null);
   const [scanning, setScanning] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+
+  const [languages, setLanguages] = useState<SetupLanguage[]>([]);
+  const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
 
   const [chosenRelease, setChosenRelease] = useState<string | null>(null);
   const [chosenDistro, setChosenDistro] = useState<string | null>(null);
@@ -184,6 +192,7 @@ export default function App() {
 
   useEffect(() => {
     api.isAdmin().then(setAdmin).catch(() => setAdmin(false));
+    api.setupLanguages().then(setLanguages).catch(() => setLanguages([]));
     refreshDisks();
     scan();
 
@@ -222,6 +231,13 @@ export default function App() {
   // sẽ làm mờ đi những chiếc USB hoàn toàn dùng được.
   const minUsbBytes =
     family === "linux" ? Math.max(distro?.iso_size ?? 0, 2 * 1024 ** 3) : WINDOWS_MIN_USB;
+
+  // Ngôn ngữ hiển thị trong autounattend.xml phải khớp ngôn ngữ của ISO: đặt
+  // một ngôn ngữ không có trong ảnh đĩa thì Windows Setup bỏ qua cả file.
+  const uiLocale = languages.find((l) => l.ms_name === language)?.locale ?? "en-US";
+  useEffect(() => {
+    setUnattend((u) => (u.ui_language === uiLocale ? u : { ...u, ui_language: uiLocale }));
+  }, [uiLocale]);
 
   const flow = family === "linux" ? LINUX_FLOW : WINDOWS_FLOW;
 
@@ -320,7 +336,7 @@ export default function App() {
         release.source === "volume_license"
           ? null
           : async () => {
-              const links = await api.fetchDownloadLinks(release.id, "Vietnamese");
+              const links = await api.fetchDownloadLinks(release.id, language);
               if (links.length === 0) throw new Error("Microsoft không trả về link tải nào.");
               return { url: links[0].url, filename: `${release.id}.iso`, sha256: null };
             },
@@ -329,7 +345,7 @@ export default function App() {
           ? `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`
           : null,
     };
-  }, [family, distro, release]);
+  }, [family, distro, release, language]);
 
   return (
     <div className="app">
@@ -396,7 +412,8 @@ export default function App() {
             <StepRecommend rec={rec} loading={scanning} chosen={chosenRelease}
                            onChoose={setChosenRelease}
                            onRefreshCatalog={refreshCatalog} refreshing={refreshingCatalog}
-                           onSeeHardware={() => setStep("hardware")} />
+                           onSeeHardware={() => setStep("hardware")}
+                           languages={languages} language={language} onLanguage={setLanguage} />
           )}
 
           {current === "source" && (
@@ -419,7 +436,7 @@ export default function App() {
           {current === "write" && family !== "linux" && (
             <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
                        format={formatResult} unattend={unattend} onUnattend={setUnattend}
-                       onDone={setWriteDone} />
+                       languages={languages} isoLanguage={language} onDone={setWriteDone} />
           )}
 
           {current === "verify" && (

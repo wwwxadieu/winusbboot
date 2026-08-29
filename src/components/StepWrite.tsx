@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { api, errorText, events } from "../lib/api";
 import type {
-  FormatResult, IsoInfo, PartitionScheme, UnattendConfig, UsbDisk, WriteProgress,
+  FormatResult, IsoInfo, PartitionScheme, SetupLanguage, UnattendConfig, UsbDisk,
+  WriteProgress,
 } from "../types";
 import { bytes, pct } from "../lib/format";
 import { Note, Panel, Progress } from "./ui";
@@ -16,11 +17,6 @@ const STAGE_NAME: Record<string, string> = {
   unattend: "Thiết lập cài đặt tự động",
   done: "Hoàn tất",
 };
-
-const LANGS: { id: string; kbd: string; label: string }[] = [
-  { id: "vi-VN", kbd: "0409:00000409", label: "Tiếng Việt" },
-  { id: "en-US", kbd: "0409:00000409", label: "English (US)" },
-];
 
 const TZ = [
   { id: "SE Asia Standard Time", label: "Hà Nội, Bangkok, Jakarta (GMT+7)" },
@@ -67,6 +63,8 @@ export function StepWrite({
   format,
   unattend,
   onUnattend,
+  languages,
+  isoLanguage,
   onDone,
 }: {
   disk: UsbDisk | null;
@@ -76,6 +74,9 @@ export function StepWrite({
   format: FormatResult | null;
   unattend: UnattendConfig;
   onUnattend: (c: UnattendConfig) => void;
+  languages: SetupLanguage[];
+  /** Tên Microsoft của ngôn ngữ ISO đã chọn ở bước Phiên bản. */
+  isoLanguage: string;
   /** Bước Kiểm tra chỉ mở ra khi ghi xong, nên trạng thái này phải nằm ở App. */
   onDone: (v: boolean) => void;
 }) {
@@ -102,6 +103,8 @@ export function StepWrite({
     onUnattend({ ...unattend, [k]: v });
 
   const acc = unattend.local_account;
+  const isoLabel =
+    languages.find((l) => l.ms_name === isoLanguage)?.label ?? isoLanguage;
 
   async function start() {
     if (!disk || !iso) return;
@@ -174,13 +177,28 @@ export function StepWrite({
         {unattend.enabled && (
           <>
             <div className="grid grid--3" style={{ marginTop: 14 }}>
-              <Field label="NGÔN NGỮ">
-                <select style={fieldStyle} disabled={running} value={unattend.language}
+              {/* Ngôn ngữ hiển thị không chọn được ở đây: nó bị khoá bởi ngôn
+                  ngữ của file ISO. Đặt một ngôn ngữ không có trong ảnh đĩa thì
+                  Windows Setup bỏ qua cả file trả lời. */}
+              <Field label="NGÔN NGỮ HIỂN THỊ">
+                <div style={{ ...fieldStyle, opacity: 0.75 }}>
+                  {isoLabel} <span style={{ color: "var(--text-faint)" }}>· theo bộ cài</span>
+                </div>
+              </Field>
+
+              <Field label="ĐỊNH DẠNG VÙNG">
+                <select style={fieldStyle} disabled={running} value={unattend.locale}
                         onChange={(e) => {
-                          const l = LANGS.find((x) => x.id === e.target.value) ?? LANGS[0];
-                          onUnattend({ ...unattend, language: l.id, keyboard: l.kbd });
+                          const l = languages.find((x) => x.locale === e.target.value);
+                          onUnattend({
+                            ...unattend,
+                            locale: e.target.value,
+                            keyboard: l?.keyboard ?? unattend.keyboard,
+                          });
                         }}>
-                  {LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                  {languages.map((l) => (
+                    <option key={l.locale} value={l.locale}>{l.label}</option>
+                  ))}
                 </select>
               </Field>
 

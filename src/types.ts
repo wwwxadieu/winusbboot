@@ -212,7 +212,17 @@ export interface LocalAccount {
 
 export interface UnattendConfig {
   enabled: boolean;
-  language: string;
+  /**
+   * Ngôn ngữ **hiển thị** của Windows, vd `en-US`. Bị giới hạn bởi những gì có
+   * trong file ISO — Microsoft không phát hành ISO tiếng Việt nên trường này
+   * không bao giờ là `vi-VN`.
+   */
+  ui_language: string;
+  /**
+   * Locale cho **định dạng vùng**: ngày tháng, tiền tệ, số. Locale nào cũng
+   * được, kể cả `vi-VN` trên một bản Windows tiếng Anh.
+   */
+  locale: string;
   keyboard: string;
   timezone: string;
   computer_name: string;
@@ -384,4 +394,23 @@ export interface ReadbackResult {
   expected_sha: string | null;
   actual_sha: string | null;
   message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Ngôn ngữ bộ cài
+// ---------------------------------------------------------------------------
+
+export interface SetupLanguage {
+  /** Đúng tên Microsoft dùng trên trang tải. Rỗng nghĩa là không có ISO. */
+  ms_name: string;
+  /** Mã locale cho autounattend.xml. */
+  locale: string;
+  label: string;
+  keyboard: string;
+  /**
+   * Chỉ dùng được cho định dạng vùng và bàn phím, không có ISO tương ứng.
+   * Hiện chỉ tiếng Việt rơi vào nhóm này — Microsoft chưa từng phát hành ISO
+   * Windows tiếng Việt.
+   */
+  region_only: boolean;
 }
