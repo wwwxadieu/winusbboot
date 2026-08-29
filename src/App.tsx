@@ -104,6 +104,9 @@ export default function App() {
   const [unattend, setUnattend] = useState<UnattendConfig>(DEFAULT_UNATTEND);
 
   const [writeDone, setWriteDone] = useState(false);
+  // ISO đã bị dọn sau khi ghi: bước Kiểm tra vẫn đọc được cấu trúc ổ, nhưng
+  // phần đối chiếu từng byte thì cần chính file đó nên phải giải thích.
+  const [isoDiscarded, setIsoDiscarded] = useState(false);
 
   const [fatal, setFatal] = useState<string | null>(null);
 
@@ -115,6 +118,7 @@ export default function App() {
   // Đổi ổ USB thì kết quả format của ổ cũ không còn giá trị.
   useEffect(() => {
     setFormatResult(null);
+    setIsoDiscarded(false);
   }, [selectedDisk]);
 
   useEffect(() => {
@@ -329,21 +333,22 @@ export default function App() {
       };
     }
     if (!release) return null;
+    // Tải tự động cho Windows đã tắt: Microsoft gỡ endpoint
+    // /api/controls/contentinclude/html mà luồng này dựa vào — nó trả 404 với
+    // mọi pageId, và trang tải hiện tại cũng không còn tham chiếu tới nó. Để
+    // nút đó bật thì người dùng bấm vào chỉ nhận lỗi sau một hồi chờ, nên thà
+    // nói thẳng ngay từ đầu và chỉ sang đường tải thủ công.
+    //
+    // Phần mã lấy link vẫn giữ nguyên trong download.rs kèm test, để bật lại
+    // được ngay khi có người dựng lại luồng mới của Microsoft.
     return {
       name: release.name,
       officialPage: () => api.officialDownloadPage(release.id),
-      resolve:
-        release.source === "volume_license"
-          ? null
-          : async () => {
-              const links = await api.fetchDownloadLinks(release.id, language);
-              if (links.length === 0) throw new Error("Microsoft không trả về link tải nào.");
-              return { url: links[0].url, filename: `${release.id}.iso`, sha256: null };
-            },
+      resolve: null,
       manualNote:
         release.source === "volume_license"
           ? `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`
-          : null,
+          : `Microsoft đã gỡ luồng tải tự động mà ứng dụng dùng, nên nút tải tự động không còn hoạt động cho Windows. Bấm "Mở trang tải chính thức", chọn ${language}, tải file ISO về rồi quay lại đây chọn file.`,
     };
   }, [family, distro, release, language]);
 
@@ -431,16 +436,17 @@ export default function App() {
           {current === "write" && family === "linux" && (
             <StepWriteRaw disk={disk} iso={iso} release={distro}
                           admin={admin === true} onAdminRelaunch={elevate}
-                          onDone={setWriteDone} />
+                          onDone={setWriteDone} onDiscarded={() => setIsoDiscarded(true)} />
           )}
           {current === "write" && family !== "linux" && (
             <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
                        format={formatResult} unattend={unattend} onUnattend={setUnattend}
-                       languages={languages} isoLanguage={language} onDone={setWriteDone} />
+                       languages={languages} isoLanguage={language} onDone={setWriteDone}
+                       onDiscarded={() => setIsoDiscarded(true)} />
           )}
 
           {current === "verify" && (
-            <StepVerify request={bootRequest} writeDone={writeDone} />
+            <StepVerify request={bootRequest} writeDone={writeDone} isoDiscarded={isoDiscarded} />
           )}
 
           <div className="actions">

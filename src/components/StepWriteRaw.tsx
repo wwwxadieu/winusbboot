@@ -26,6 +26,7 @@ export function StepWriteRaw({
   admin,
   onAdminRelaunch,
   onDone,
+  onDiscarded,
 }: {
   disk: UsbDisk | null;
   iso: IsoInfo | null;
@@ -34,12 +35,17 @@ export function StepWriteRaw({
   onAdminRelaunch: () => void;
   /** Bước Kiểm tra chỉ mở ra khi ghi xong, nên trạng thái này phải nằm ở App. */
   onDone: (v: boolean) => void;
+  /** Báo lên App rằng file ISO đã bị dọn, để bước Kiểm tra biết mà giải thích. */
+  onDiscarded: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prog, setProg] = useState<WriteProgress | null>(null);
+  // Chỉ dọn được file do ứng dụng tự tải; file người dùng tự chọn là của họ.
+  const [cleanup, setCleanup] = useState(true);
+  const [discarded, setDiscarded] = useState<string | null>(null);
 
   // Đổi ổ hay đổi file thì mọi thứ đã xác nhận trước đó không còn giá trị.
   useEffect(() => {
@@ -68,6 +74,19 @@ export function StepWriteRaw({
         });
         setDone(true);
         onDone(true);
+
+        if (cleanup && iso.managed) {
+          try {
+            await api.discardIso(iso.path);
+            setDiscarded(iso.path.split(/[\\/]/).pop() ?? iso.path);
+            onDiscarded();
+          } catch (e) {
+            // Dọn dẹp hỏng không làm hỏng chiếc USB vừa ghi, nên chỉ ghi chú
+            // lại chứ không biến cả bước thành thất bại.
+            setDiscarded(null);
+            console.warn("không dọn được file ISO:", errorText(e));
+          }
+        }
       } finally {
         un();
       }
@@ -130,6 +149,26 @@ export function StepWriteRaw({
         </div>
       </Panel>
 
+      {iso.managed && (
+        <Panel title="Sau khi ghi xong">
+          <label style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
+            <input type="checkbox" checked={cleanup} disabled={running}
+                   onChange={(e) => setCleanup(e.target.checked)}
+                   style={{ width: 16, height: 16, marginTop: 2, accentColor: "var(--accent)" }} />
+            <span>
+              <span style={{ fontWeight: 600, fontSize: 13.5, display: "block" }}>
+                Xoá file ISO sau khi ghi xong
+              </span>
+              <span style={{ fontSize: 12.2, color: "var(--text-dim)", display: "block", marginTop: 2 }}>
+                File {bytes(iso.size)} này do ứng dụng tự tải về, ghi xong là không cần nữa.
+                Tắt tuỳ chọn nếu bạn muốn giữ lại để ghi thêm USB khác — hoặc để dùng chức
+                năng đối chiếu từng byte ở bước Kiểm tra, vì việc đó cần chính file này.
+              </span>
+            </span>
+          </label>
+        </Panel>
+      )}
+
       {release?.secure_boot === "unsigned" && (
         <Note type="warn" icon="!" title="Nhớ tắt Secure Boot trước khi khởi động">
           {release.name} không có shim ký sẵn. Máy đang bật Secure Boot sẽ bỏ qua USB này mà
@@ -164,6 +203,12 @@ export function StepWriteRaw({
       )}
 
       {error && <Note type="danger" icon="✕" title="Ghi USB thất bại">{error}</Note>}
+
+      {discarded && (
+        <Note type="info" icon="🧹" title="Đã dọn file ISO">
+          Đã xoá <b style={{ display: "inline" }}>{discarded}</b> để không chiếm dung lượng ổ đĩa.
+        </Note>
+      )}
 
       {done && (
         <Note type="ok" icon="✓" title="USB đã sẵn sàng">

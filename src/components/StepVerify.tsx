@@ -65,10 +65,17 @@ function BootWays({ r }: { r: BootReport }) {
 export function StepVerify({
   request,
   writeDone,
+  isoDiscarded,
 }: {
   request: BootCheckRequest | null;
   /** Chưa ghi xong thì chưa có gì để kiểm tra. */
   writeDone: boolean;
+  /**
+   * File ISO đã bị dọn sau khi ghi. Kiểm tra cấu trúc vẫn chạy được, nhưng đối
+   * chiếu từng byte thì cần chính file đó nên phải nói rõ thay vì để người dùng
+   * bấm rồi nhận lỗi khó hiểu.
+   */
+  isoDiscarded: boolean;
 }) {
   const [report, setReport] = useState<BootReport | null>(null);
   const [checking, setChecking] = useState(false);
@@ -217,12 +224,20 @@ export function StepVerify({
           Việc này mất gần bằng thời gian ghi.
         </Note>
 
-        <div className="actions">
-          <button className="btn btn--sm" onClick={startReadback} disabled={reading || !request}>
-            {reading && <span className="spinner" />}
-            {readback ? "Đối chiếu lại" : "Đọc lại và đối chiếu"}
-          </button>
-        </div>
+        {isoDiscarded ? (
+          <Note type="warn" icon="!" title="Không đối chiếu được vì file ISO đã bị dọn">
+            Bạn đã bật "Xoá file ISO sau khi ghi xong" ở bước trước, nên không còn bản gốc
+            để so. Các mục kiểm tra cấu trúc ở trên vẫn có giá trị. Muốn dùng chức năng này
+            thì tắt tuỳ chọn xoá ở bước Ghi rồi ghi lại.
+          </Note>
+        ) : (
+          <div className="actions">
+            <button className="btn btn--sm" onClick={startReadback} disabled={reading || !request}>
+              {reading && <span className="spinner" />}
+              {readback ? "Đối chiếu lại" : "Đọc lại và đối chiếu"}
+            </button>
+          </div>
+        )}
 
         {reading && (
           <div style={{ marginTop: 14 }}>

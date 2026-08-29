@@ -257,6 +257,56 @@ pub async fn fetch_official_links(release_id: &str, language: &str) -> Result<Ve
     Ok(options)
 }
 
+// ---------------------------------------------------------------------------
+// Thư mục tải của ứng dụng
+// ---------------------------------------------------------------------------
+
+/// Nơi ứng dụng tự tải ISO về.
+///
+/// Trước đây bước tải bắt người dùng chọn thư mục thủ công, rồi để lại một file
+/// 3–6 GB nằm đó vĩnh viễn — phần lớn người dùng ghi xong USB là không cần tới
+/// nó nữa. Giờ ứng dụng tự quản một thư mục riêng, và chỉ những file nằm trong
+/// đó mới được phép xoá tự động.
+pub fn managed_dir() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("GetWinUSB").join("iso")
+}
+
+/// File này có phải do ứng dụng tải về thư mục riêng của nó không.
+///
+/// Đây là hàng rào duy nhất giữa "dọn dẹp file tạm" và "xoá mất file ISO người
+/// dùng đã tự tải về từ trước". So sau khi chuẩn hoá cả hai đường dẫn, nên
+/// `..` hay dấu phân cách khác kiểu đều không lách qua được.
+pub fn is_managed(path: &std::path::Path) -> bool {
+    let dir = managed_dir();
+    // canonicalize() chỉ chạy được với đường dẫn có thật; file đã xoá rồi thì
+    // lùi về so sánh dạng thô.
+    let norm = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    norm(path).starts_with(norm(&dir))
+}
+
+/// Xoá file ISO ứng dụng đã tải, sau khi ghi xong USB.
+///
+/// Từ chối mọi đường dẫn nằm ngoài thư mục quản lý. Người dùng chọn file ISO có
+/// sẵn trên máy thì file đó là của họ — xoá nhầm một file 6 GB họ đã tải cả
+/// buổi là thiệt hại không sửa được.
+pub fn discard(path: &std::path::Path) -> Result<bool> {
+    if !is_managed(path) {
+        return Err(AppError::new(
+            "not_managed",
+            "Chỉ xoá được file do ứng dụng tự tải về. File bạn tự chọn thì ứng dụng không đụng tới.",
+        ));
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        // Không còn ở đó thì coi như đã dọn xong.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Tải file có báo tiến trình, tự nối tiếp nếu file tải dở còn nằm trên đĩa.
 pub async fn download<F>(url: &str, dest: &Path, mut on_progress: F) -> Result<PathBuf>
 where
@@ -472,6 +522,53 @@ pub async fn resolve_distro_iso(checksum_url: &str, want: &str) -> Result<Resolv
         filename,
         sha256,
     })
+}
+
+#[cfg(test)]
+mod discard_tests {
+    use super::*;
+
+    /// Hàng rào quan trọng nhất của tính năng dọn dẹp: file người dùng tự chọn
+    /// là của họ. Xoá nhầm một file ISO 6 GB họ đã tải cả buổi là thiệt hại
+    /// không sửa được, nên đây phải là một từ chối thẳng thừng.
+    #[test]
+    fn a_file_the_user_chose_themselves_is_never_touched() {
+        for outside in [
+            "D:\\ISO\\Win11.iso",
+            "/home/nguoidung/Downloads/ubuntu.iso",
+            "C:\\Users\\An\\Desktop\\mint.iso",
+        ] {
+            let p = std::path::Path::new(outside);
+            assert!(!is_managed(p), "{outside} không nằm trong thư mục quản lý");
+            let err = discard(p).expect_err("phải từ chối");
+            assert_eq!(err.code, "not_managed");
+        }
+    }
+
+    #[test]
+    fn a_file_the_app_downloaded_is_recognised() {
+        let inside = managed_dir().join("ubuntu-24.04.3-desktop-amd64.iso");
+        assert!(is_managed(&inside));
+    }
+
+    /// Thư mục cha trùng tiền tố nhưng không phải thư mục quản lý thì không
+    /// được lọt — "GetWinUSB-cu" bắt đầu bằng "GetWinUSB".
+    #[test]
+    fn a_lookalike_sibling_directory_does_not_count_as_managed() {
+        let sneaky = managed_dir()
+            .parent().unwrap()
+            .parent().unwrap()
+            .join("GetWinUSB-cu").join("iso").join("x.iso");
+        assert!(!is_managed(&sneaky), "{} không được coi là thư mục quản lý", sneaky.display());
+    }
+
+    /// Xoá một file đã không còn ở đó là chuyện bình thường — người dùng có thể
+    /// đã tự xoá tay. Không được coi là lỗi.
+    #[test]
+    fn discarding_an_already_gone_file_is_not_an_error() {
+        let gone = managed_dir().join("khong-ton-tai-12345.iso");
+        assert_eq!(discard(&gone).unwrap(), false);
+    }
 }
 
 #[cfg(test)]

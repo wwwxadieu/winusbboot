@@ -77,10 +77,10 @@ export function StepSource({
     try {
       const target = await plan.resolve();
 
-      const dest = await openDialog({ directory: true, title: "Chọn thư mục lưu file ISO" });
-      if (typeof dest !== "string") { setBusy(null); return; }
-
-      const path = `${dest}\\${target.filename}`;
+      // Không bắt chọn thư mục nữa: ứng dụng tự tải vào thư mục riêng của nó,
+      // và chính vì file nằm ở đó nên bước ghi mới dọn dẹp được nó sau này.
+      const dir = await api.isoDownloadDir();
+      const path = `${dir}\\${target.filename}`;
       const un = await events.onDownloadProgress(setDl);
       try {
         await api.downloadIso(target.url, path);
@@ -161,11 +161,19 @@ export function StepSource({
                   disabled={busy !== null || !plan?.resolve}>
             <span className="opt__radio" />
             <span>
-              <span className="opt__title">Tải tự động từ nguồn chính thức</span>
+              <span className="opt__title">
+                Tải tự động từ nguồn chính thức
+                {plan && !plan.resolve && " — không dùng được"}
+              </span>
               <span className="opt__desc">
-                {family === "linux"
-                  ? "Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự đối chiếu mã băm."
-                  : "Lấy link chính thức rồi tải về. Microsoft đôi khi chặn tải tự động theo khu vực — nếu thất bại hãy dùng cách thủ công bên dưới."}
+                {/* Mô tả phải nói đúng trạng thái hiện tại. Để nguyên câu quảng
+                    cáo tính năng trong khi nút đã tắt thì người dùng sẽ ngồi
+                    bấm mãi mà không hiểu vì sao không có gì xảy ra. */}
+                {plan && !plan.resolve
+                  ? "Xem lý do ở khung phía trên."
+                  : family === "linux"
+                    ? "Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự đối chiếu mã băm. File lưu vào thư mục riêng của ứng dụng."
+                    : "Lấy link chính thức rồi tải về."}
               </span>
             </span>
           </button>

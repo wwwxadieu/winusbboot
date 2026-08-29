@@ -186,6 +186,11 @@ export interface IsoInfo {
   architecture: string;
   needs_split: boolean;
   bootable_uefi: boolean;
+  /**
+   * File do ứng dụng tự tải về thư mục riêng của nó, nên dọn dẹp được. File
+   * người dùng tự chọn thì `false` và ứng dụng không bao giờ xoá.
+   */
+  managed: boolean;
 }
 
 export type PartitionScheme = "gpt_fat32" | "mbr_fat32" | "mbr_ntfs";

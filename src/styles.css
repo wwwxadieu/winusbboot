@@ -484,7 +484,10 @@ code {
   text-align: left; width: 100%; color: inherit; font: inherit;
   transition: all var(--dur) var(--ease);
 }
-.opt:hover { background: var(--glass-hi); }
+.opt:hover:not(:disabled) { background: var(--glass-hi); }
+/* Không có quy tắc này thì nút đã tắt trông y hệt nút còn bấm được, và người
+   dùng cứ bấm mãi vào một thứ không phản hồi. */
+.opt:disabled { opacity: 0.45; cursor: not-allowed; }
 .opt[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--accent) 65%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
