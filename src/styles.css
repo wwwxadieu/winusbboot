@@ -1,0 +1,547 @@
+/* =========================================================================
+   Get WinUSB — hệ thống thiết kế
+   Mặt kính xếp lớp, chuyển sắc tím-chàm, tự đổi theo chế độ sáng/tối.
+   ========================================================================= */
+
+:root {
+  --accent: #6366f1;
+  --accent-2: #a855f7;
+  --ok: #10b981;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --info: #38bdf8;
+
+  --radius-lg: 20px;
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  --font: "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Code", "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+
+  --dur: 220ms;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* --- Chế độ tối (mặc định) --- */
+:root,
+:root[data-theme="dark"] {
+  --bg: #0a0a12;
+  --bg-glow-1: rgba(99, 102, 241, 0.28);
+  --bg-glow-2: rgba(168, 85, 247, 0.22);
+  --bg-glow-3: rgba(56, 189, 248, 0.14);
+
+  --glass: rgba(255, 255, 255, 0.055);
+  --glass-hi: rgba(255, 255, 255, 0.085);
+  --glass-lo: rgba(255, 255, 255, 0.03);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-hi: rgba(255, 255, 255, 0.18);
+
+  --text: #f2f3f8;
+  --text-dim: rgba(242, 243, 248, 0.62);
+  --text-faint: rgba(242, 243, 248, 0.38);
+
+  --shadow: 0 20px 60px -18px rgba(0, 0, 0, 0.75);
+  --inner-hi: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+/* --- Chế độ sáng --- */
+:root[data-theme="light"] {
+  --bg: #eef0f8;
+  --bg-glow-1: rgba(99, 102, 241, 0.30);
+  --bg-glow-2: rgba(168, 85, 247, 0.24);
+  --bg-glow-3: rgba(56, 189, 248, 0.20);
+
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-hi: rgba(255, 255, 255, 0.80);
+  --glass-lo: rgba(255, 255, 255, 0.42);
+  --border: rgba(15, 23, 42, 0.09);
+  --border-hi: rgba(15, 23, 42, 0.16);
+
+  --text: #12131c;
+  --text-dim: rgba(18, 19, 28, 0.64);
+  --text-faint: rgba(18, 19, 28, 0.40);
+
+  --shadow: 0 20px 50px -20px rgba(30, 41, 90, 0.35);
+  --inner-hi: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.55;
+  user-select: none;
+}
+
+/* Ba vệt sáng nền tạo chiều sâu cho các lớp kính phía trên */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -30%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 18% 12%, var(--bg-glow-1), transparent 70%),
+    radial-gradient(34% 40% at 84% 22%, var(--bg-glow-2), transparent 68%),
+    radial-gradient(46% 46% at 58% 96%, var(--bg-glow-3), transparent 72%);
+  filter: blur(20px);
+}
+
+::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+/* ---------------------------------------------------------------- Khung */
+
+.app {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: grid;
+  grid-template-rows: 46px 1fr;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 6px 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--glass-lo);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+}
+
+.titlebar__drag { flex: 1; height: 100%; -webkit-app-region: drag; display: flex; align-items: center; gap: 10px; }
+
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 620; letter-spacing: -0.01em; }
+.brand__mark {
+  width: 22px; height: 22px; border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 3px 10px -2px color-mix(in srgb, var(--accent) 65%, transparent);
+  display: grid; place-items: center;
+}
+.brand__mark svg { width: 13px; height: 13px; }
+
+.badge-admin {
+  font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border-hi); color: var(--text-dim);
+}
+.badge-admin[data-on="true"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+
+.winbtns { display: flex; }
+.winbtn {
+  width: 42px; height: 34px; border: 0; background: transparent; color: var(--text-dim);
+  border-radius: var(--radius-sm); cursor: pointer; display: grid; place-items: center;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.winbtn:hover { background: var(--glass-hi); color: var(--text); }
+.winbtn--close:hover { background: var(--danger); color: #fff; }
+
+.body { display: grid; grid-template-columns: 246px 1fr; min-height: 0; }
+
+/* ------------------------------------------------------------ Cột bước */
+
+.rail {
+  padding: 20px 14px;
+  border-right: 1px solid var(--border);
+  background: var(--glass-lo);
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  display: flex; flex-direction: column; gap: 3px;
+  overflow-y: auto;
+}
+
+.rail__label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--text-faint); padding: 0 10px 10px;
+}
+
+.step {
+  display: flex; align-items: center; gap: 11px;
+  padding: 10px 11px; border-radius: var(--radius);
+  border: 1px solid transparent; background: transparent;
+  color: var(--text-dim); cursor: pointer; text-align: left; width: 100%;
+  font: inherit; font-weight: 520;
+  transition: all var(--dur) var(--ease);
+}
+.step:hover:not(:disabled) { background: var(--glass); color: var(--text); }
+.step:disabled { opacity: 0.38; cursor: not-allowed; }
+.step[aria-current="true"] {
+  background: var(--glass-hi); border-color: var(--border-hi);
+  color: var(--text); box-shadow: var(--inner-hi);
+}
+
+.step__num {
+  width: 25px; height: 25px; flex: none; border-radius: 8px;
+  display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  background: var(--glass); border: 1px solid var(--border);
+  transition: all var(--dur) var(--ease);
+}
+.step[aria-current="true"] .step__num {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent; color: #fff;
+}
+.step[data-done="true"] .step__num { background: var(--ok); border-color: transparent; color: #fff; }
+
+.step__text { min-width: 0; }
+.step__title { display: block; font-size: 13px; }
+.step__sub {
+  display: block; font-size: 11px; color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.rail__foot { margin-top: auto; padding-top: 14px; display: flex; gap: 8px; }
+
+/* ------------------------------------------------------------- Nội dung */
+
+.main { overflow-y: auto; padding: 26px 30px 34px; min-width: 0; }
+.main__head { margin-bottom: 20px; }
+.main__head h1 { font-size: 23px; font-weight: 660; letter-spacing: -0.022em; }
+.main__head p { color: var(--text-dim); margin-top: 5px; max-width: 66ch; }
+
+.panel {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(34px) saturate(175%);
+  -webkit-backdrop-filter: blur(34px) saturate(175%);
+  box-shadow: var(--shadow), var(--inner-hi);
+  padding: 18px;
+}
+.panel + .panel { margin-top: 14px; }
+.panel__title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 13px;
+}
+
+.grid { display: grid; gap: 12px; }
+.grid--2 { grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
+.grid--3 { grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+
+/* ---------------------------------------------------------------- Thẻ ổ */
+
+.disk {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+  padding: 14px 16px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--glass-lo);
+  color: inherit; font: inherit; cursor: pointer;
+  transition: all var(--dur) var(--ease);
+}
+.disk:hover:not(:disabled) { background: var(--glass-hi); border-color: var(--border-hi); transform: translateY(-1px); }
+.disk:disabled { opacity: 0.5; cursor: not-allowed; }
+.disk[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--glass-lo));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.disk__icon {
+  width: 40px; height: 40px; flex: none; border-radius: 11px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
+}
+/* Cả hai đều là <span> nên phải ép về block, không thì tên ổ và dòng mô tả
+   dính liền nhau trên một dòng và margin-top bên dưới không có tác dụng. */
+.disk__name { display: block; font-weight: 600; letter-spacing: -0.008em; }
+.disk__meta { display: block; font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.disk__size { margin-left: auto; text-align: right; flex: none; }
+.disk__size b { font-size: 17px; font-weight: 660; letter-spacing: -0.02em; }
+.disk__size span { display: block; font-size: 11px; color: var(--text-faint); }
+
+/* --------------------------------------------------------- Số liệu nhỏ */
+
+.stat {
+  padding: 13px 15px; border-radius: var(--radius);
+  background: var(--glass-lo); border: 1px solid var(--border);
+}
+.stat__k { font-size: 11px; color: var(--text-faint); font-weight: 600; letter-spacing: 0.03em; }
+.stat__v { font-size: 15px; font-weight: 600; margin-top: 3px; letter-spacing: -0.012em; word-break: break-word; }
+.stat__note { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
+
+/* ------------------------------------------------------ Dòng kiểm tra */
+
+.check { display: flex; align-items: flex-start; gap: 12px; padding: 11px 4px; }
+.check + .check { border-top: 1px solid var(--border); }
+.check__dot {
+  width: 19px; height: 19px; flex: none; border-radius: 999px; margin-top: 1px;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff;
+}
+.check__dot[data-s="pass"] { background: var(--ok); }
+.check__dot[data-s="fixable"] { background: var(--warn); }
+.check__dot[data-s="fail"] { background: var(--danger); }
+.check__dot[data-s="unknown"] { background: var(--text-faint); }
+/* Bước kiểm tra khởi động dùng bộ tên riêng, nhưng cùng bảng màu. */
+.check__dot[data-s="warn"] { background: var(--warn); }
+.check__dot[data-s="skipped"] { background: var(--text-faint); }
+.check__body { min-width: 0; flex: 1; }
+.check__label { font-weight: 600; font-size: 13px; }
+.check__value { color: var(--text-dim); font-size: 12.5px; word-break: break-word; }
+.check__hint {
+  font-size: 12px; margin-top: 5px; padding: 7px 10px; border-radius: var(--radius-sm);
+  background: var(--glass-lo); border-left: 2px solid var(--warn); color: var(--text-dim);
+}
+
+/* ------------------------------------------------------ Thẻ khuyến nghị */
+
+.rec {
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--glass-lo); padding: 12px 14px; cursor: pointer; text-align: left;
+  width: 100%; color: inherit; font: inherit;
+  transition: all var(--dur) var(--ease);
+}
+.rec:hover { border-color: var(--border-hi); background: var(--glass-hi); }
+.rec[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.rec__top { display: flex; align-items: center; gap: 9px; }
+.rec__logo { width: 17px; height: 17px; flex: none; fill: var(--accent); }
+.rec[aria-pressed="true"] .rec__logo { fill: var(--accent-2); }
+.rec__name { font-size: 14.5px; font-weight: 650; letter-spacing: -0.016em; }
+.rec__score {
+  margin-left: auto; font-size: 17px; font-weight: 700; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.rec__build { font-size: 11px; color: var(--text-faint); font-family: var(--mono); }
+.rec__tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.rec__tags .pill { font-size: 10.5px; padding: 2px 8px; }
+.rec__line {
+  font-size: 12px; display: flex; gap: 7px; align-items: flex-start;
+  color: var(--text-dim); margin-top: 9px; line-height: 1.45;
+}
+.rec__line b { flex: none; font-weight: 700; }
+.rec__line--pro b { color: var(--ok); }
+.rec__line--con b { color: var(--warn); }
+.rec__line--blk b { color: var(--danger); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 650; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border-hi); color: var(--text-dim);
+}
+.pill[data-v="recommended"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.pill[data-v="needs_setup"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.pill[data-v="needs_bypass"] { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); background: color-mix(in srgb, var(--info) 12%, transparent); }
+.pill[data-v="blocked"] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* Ai nên dùng bản này — chỉ có ở thẻ distro, thẻ Windows không có khái niệm này. */
+.rec__who {
+  font-size: 11.5px; color: var(--text-faint); margin-top: 8px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+
+/* Danh sách lý do vướng mắc, dùng ở bảng chi tiết bản Linux đã chọn. */
+.reasons { list-style: none; display: grid; gap: 7px; }
+.reasons li {
+  font-size: 12.5px; color: var(--text-dim); line-height: 1.5;
+  padding-left: 20px; position: relative;
+}
+.reasons li::before {
+  position: absolute; left: 0; top: 0; font-weight: 700;
+}
+.reasons li[data-t="con"]::before { content: "!"; color: var(--warn); }
+.reasons li[data-t="blk"]::before { content: "\2715"; color: var(--danger); }
+
+/* ------------------------------------------------ Đường khởi động */
+
+.bootway {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--glass-lo);
+}
+.bootway[data-on="true"] {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: color-mix(in srgb, var(--ok) 9%, var(--glass-lo));
+}
+.bootway[data-on="false"] {
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--glass-lo));
+}
+.bootway__mark {
+  width: 22px; height: 22px; flex: none; border-radius: 999px;
+  display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff;
+}
+.bootway[data-on="true"] .bootway__mark { background: var(--ok); }
+.bootway[data-on="false"] .bootway__mark { background: var(--danger); }
+.bootway__title { display: block; font-weight: 600; font-size: 13.5px; }
+.bootway__desc { display: block; font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+
+/* --------------------------------------------------- Thẻ chọn hệ điều hành */
+
+.oscard {
+  display: flex; flex-direction: column; align-items: flex-start;
+  text-align: left; width: 100%; color: inherit; font: inherit; cursor: pointer;
+  padding: 22px 22px 20px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--glass-lo);
+  transition: all var(--dur) var(--ease);
+}
+.oscard:hover { border-color: var(--border-hi); background: var(--glass-hi); transform: translateY(-1px); }
+.oscard[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--glass-lo));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.oscard__mark {
+  width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  margin-bottom: 14px;
+}
+.oscard__mark svg { width: 25px; height: 25px; fill: #fff; }
+/* Logo Linux dùng màu nền để khoét mắt và mỏ, nên nền phải là khối đặc. */
+.oscard__mark[data-os="linux"] { background: linear-gradient(135deg, #f0a318, #e0620d); }
+.oscard__title { display: block; font-size: 19px; font-weight: 680; letter-spacing: -0.02em; }
+.oscard__sub { display: block; font-size: 12.5px; color: var(--text-dim); margin-top: 3px; }
+.oscard__points {
+  list-style: none; margin-top: 15px; display: grid; gap: 8px; width: 100%;
+}
+.oscard__points li {
+  font-size: 12.5px; color: var(--text-dim); line-height: 1.45;
+  padding-left: 19px; position: relative;
+}
+.oscard__points li::before {
+  content: "\2713"; position: absolute; left: 0; top: 0;
+  color: var(--ok); font-weight: 700;
+}
+
+code {
+  font-family: var(--mono); font-size: 0.92em;
+  background: var(--glass-hi); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 5px;
+}
+
+/* ------------------------------------------------------------ Nút bấm */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px 17px; border-radius: var(--radius-sm); font: inherit; font-weight: 600; font-size: 13px;
+  border: 1px solid var(--border-hi); background: var(--glass); color: var(--text); cursor: pointer;
+  transition: all var(--dur) var(--ease);
+}
+.btn:hover:not(:disabled) { background: var(--glass-hi); transform: translateY(-1px); }
+.btn:active:not(:disabled) { transform: translateY(0); }
+.btn:disabled { opacity: 0.42; cursor: not-allowed; }
+.btn--primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent; color: #fff;
+  box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--accent) 90%, transparent);
+}
+.btn--primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn--danger { background: var(--danger); border-color: transparent; color: #fff; }
+.btn--danger:hover:not(:disabled) { filter: brightness(1.1); }
+.btn--ghost { background: transparent; }
+.btn--sm { padding: 6px 12px; font-size: 12px; }
+.btn--icon { padding: 7px; width: 32px; }
+
+.actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+.actions--end { justify-content: flex-end; }
+.spacer { flex: 1; }
+
+/* -------------------------------------------------------- Thanh tiến độ */
+
+.bar { height: 7px; border-radius: 999px; background: var(--glass-lo); overflow: hidden; border: 1px solid var(--border); }
+.bar__fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 260ms var(--ease);
+}
+.bar--busy .bar__fill { background-size: 200% 100%; animation: slide 1.5s linear infinite; }
+@keyframes slide { to { background-position: -200% 0; } }
+
+.progress-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-top: 7px; }
+.progress-file { font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+
+/* ------------------------------------------------------------ Thông báo */
+
+.note {
+  display: flex; gap: 11px; padding: 13px 15px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--glass-lo); font-size: 13px; line-height: 1.5;
+}
+.note__icon { flex: none; font-size: 15px; line-height: 1.35; }
+.note b { display: block; margin-bottom: 2px; }
+.note[data-t="danger"] { border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.note[data-t="warn"] { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.note[data-t="ok"] { border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.note + .note, .note + .panel, .panel + .note { margin-top: 12px; }
+
+/* ------------------------------------------------------------ Lựa chọn */
+
+.opt {
+  display: flex; gap: 12px; padding: 13px 15px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--glass-lo); cursor: pointer;
+  text-align: left; width: 100%; color: inherit; font: inherit;
+  transition: all var(--dur) var(--ease);
+}
+.opt:hover { background: var(--glass-hi); }
+.opt[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.opt__radio {
+  width: 17px; height: 17px; flex: none; border-radius: 999px; margin-top: 2px;
+  border: 2px solid var(--border-hi); transition: all var(--dur) var(--ease);
+}
+.opt[aria-pressed="true"] .opt__radio { border-color: var(--accent); border-width: 5px; }
+.opt__title { display: block; font-weight: 600; font-size: 13.5px; }
+.opt__desc { display: block; font-size: 12.2px; color: var(--text-dim); margin-top: 2px; }
+
+/* ------------------------------------------------------------- Trống/tải */
+
+.empty { text-align: center; padding: 46px 20px; color: var(--text-dim); }
+.empty__icon { font-size: 34px; margin-bottom: 12px; opacity: 0.55; }
+.empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 5px; }
+
+.spinner {
+  width: 15px; height: 15px; border-radius: 999px;
+  border: 2px solid var(--border-hi); border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite; flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.pulse { animation: pulse 1.8s var(--ease) infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+.mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: content-box; }
+
+/* --------------------------------------------------- Bảng tổng kết kiểm tra */
+
+.tally { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.tally__big { font-size: 34px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.05; }
+.tally__big em { font-style: normal; font-size: 16px; font-weight: 600; color: var(--text-dim); }
+.tally__verdict { font-size: 13px; color: var(--text-dim); margin-top: 4px; max-width: 48ch; }
+
+.segbar {
+  display: flex; height: 10px; border-radius: 999px; overflow: hidden;
+  border: 1px solid var(--border); flex: 1; min-width: 190px; background: var(--glass-lo);
+}
+.segbar i { display: block; transition: width var(--dur) var(--ease); }
+.segbar i[data-s="pass"] { background: var(--ok); }
+.segbar i[data-s="fixable"] { background: var(--warn); }
+.segbar i[data-s="fail"] { background: var(--danger); }
+.segbar i[data-s="unknown"] { background: var(--text-faint); }
+
+.legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 12px; color: var(--text-dim); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend b { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+
+.check__head { display: flex; align-items: baseline; gap: 10px; }
+.check__req {
+  margin-left: auto; flex: none; font-size: 11.5px; color: var(--text-faint);
+  text-align: right; white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .check__req { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
