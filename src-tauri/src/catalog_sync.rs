@@ -106,7 +106,12 @@ fn map_columns(headers: &[String]) -> Columns {
             c.build = Some(i);
         } else if c.released.is_none() && h.contains("availability") {
             c.released = Some(i);
-        } else if h.contains("end of servicing") || h.contains("end of support") {
+        // Microsoft đã đổi cách gọi cột này ít nhất một lần ("End of servicing"
+        // thành "End of updates") mà không đổi ý nghĩa, nên nhận cả ba cách viết.
+        } else if h.contains("end of servicing")
+            || h.contains("end of support")
+            || h.contains("end of updates")
+        {
             // Bản Home/Pro hết hỗ trợ sớm hơn bản Enterprise. Người dùng phổ
             // thông dùng Home/Pro nên đó mới là mốc cần lấy; lấy nhầm cột
             // Enterprise sẽ khiến ứng dụng nói máy còn được hỗ trợ thêm một năm.
@@ -425,6 +430,32 @@ mod tests {
         assert_eq!(
             c.end_of_support,
             Some(5),
+            "phải lấy cột Home/Pro, không phải cột Enterprise vốn dài hơn một năm"
+        );
+    }
+
+    /// Tên cột trên trang của Microsoft (tháng 8/2026). Đổi cách gọi cột mà
+    /// không đổi ý nghĩa là kiểu thay đổi im lặng nhất: đồng bộ ngừng chạy
+    /// nhưng ứng dụng vẫn hiện danh mục nhúng như không có chuyện gì.
+    #[test]
+    fn the_renamed_end_of_updates_column_is_still_recognised() {
+        let headers: Vec<String> = vec![
+            "Version".into(),
+            "Servicing option".into(),
+            "Availability date".into(),
+            "End of updates: Home, Pro, Pro Education, and Pro for Workstations".into(),
+            "End of updates: Enterprise, Education, IoT Enterprise, and Enterprise multi-session"
+                .into(),
+            "Latest update".into(),
+            "Latest revision date".into(),
+            "Latest build".into(),
+        ];
+        let c = map_columns(&headers);
+        assert_eq!(c.version, Some(0));
+        assert_eq!(c.released, Some(2));
+        assert_eq!(
+            c.end_of_support,
+            Some(3),
             "phải lấy cột Home/Pro, không phải cột Enterprise vốn dài hơn một năm"
         );
     }
