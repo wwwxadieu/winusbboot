@@ -53,11 +53,10 @@ fn build(script: &str) -> Command {
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    // `cmd` là tokio::process::Command, vốn đã có sẵn creation_flags trên
+    // Windows — không cần trait CommandExt của std.
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
 }
 
