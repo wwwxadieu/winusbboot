@@ -19,6 +19,7 @@ tham số. Xem "Vì sao ISO Linux phải ghi nguyên khối" bên dưới.
 | Bước Format | Có, tách riêng, có xác nhận | Không — thao tác ghi đã bao gồm |
 | Cài đặt tự động | `autounattend.xml` | Không có |
 | Ổ USB tối thiểu | 8 GB | Vừa đúng cỡ file ISO |
+| Kiểm tra sau khi ghi | Đối chiếu từng file với ISO | Băm lại từng byte đã ghi |
 
 **1. Nhận diện USB** — một tiến trình PowerShell chạy nền suốt vòng đời ứng dụng, cứ 3 giây
 in danh sách ổ USB dưới dạng JSON. Rust đọc từng dòng và chỉ đẩy sự kiện lên giao diện khi
@@ -76,6 +77,45 @@ bên trong một nút "tạo USB" chung.
 **6. Ghi bộ cài** — chép file, tách install.wim nếu cần, ghi mã khởi động, và ghi
 `autounattend.xml`. Tiến trình hiện theo byte thực tế ở cả sáu chặng, kể cả khi đang chép
 một file 5 GB đơn lẻ.
+
+**7. Kiểm tra khởi động** — đọc lại chính chiếc USB vừa ghi. Xem "Vì sao cần bước kiểm tra"
+bên dưới.
+
+### Vì sao cần bước kiểm tra
+
+Ghi xong không có nghĩa là boot được, và không nguyên nhân nào dưới đây báo lỗi lúc ghi:
+
+1. **Chép hụt.** Ổ đầy giữa chừng, hoặc một file bị khoá nên bị bỏ qua — `robocopy` vẫn
+   kết thúc với mã thành công.
+2. **Thiếu đường khởi động.** Đủ file cài đặt nhưng thiếu `bootmgr` hoặc
+   `efi\boot\bootx64.efi`, nên firmware không tìm ra thứ gì để chạy.
+3. **USB dối.** Ổ khai 128 GB nhưng thật ra chỉ có 8 GB, hoặc flash đã gần chết. Ghi thì
+   "thành công" vì thiết bị nhận hết dữ liệu rồi vứt đi.
+
+Nhóm 1 và 2 phát hiện được bằng cách đọc cấu trúc ổ — vài giây, chạy ngay khi mở bước này.
+Nhóm 3 thì mọi kiểm tra cấu trúc đều báo xanh; chỉ có **đọc ngược toàn bộ dữ liệu vừa ghi
+và đối chiếu** mới lộ ra, và việc đó mất gần bằng thời gian ghi nên phải bấm mới chạy.
+
+Luồng Windows đối chiếu SHA-256 từng file giữa ảnh ISO gắn tạm và bản trên USB. Luồng
+Linux băm lại đúng số byte đã ghi trên `\\.\PHYSICALDRIVE<n>` rồi so với mã băm của file
+ảnh — khớp nghĩa là giống nhau từng byte.
+
+Ba ranh giới quan trọng, đều có test khoá:
+
+- **"Không đọc được" không phải "không đạt".** Cùng nguyên tắc mà phần quét phần cứng đã
+  theo: kết luận một chiếc USB tốt là hỏng sẽ khiến người dùng ghi lại một cách vô ích.
+- **Thiếu một đường khởi động không phải là hỏng.** Ổ chỉ có mã UEFI vẫn chạy tốt trên máy
+  đời mới; báo đỏ ở đó là sai.
+- **"Không khởi động được" khác "khởi động được nhưng bộ cài hỏng".** Ổ thiếu `install.wim`
+  vẫn boot vào Windows Setup rồi mới dừng. Gộp hai trường hợp làm một thì kết luận tự mâu
+  thuẫn với chính bảng đường khởi động ngay bên dưới nó, và người dùng đi tìm nhầm nguyên
+  nhân. Lỗi này đã xảy ra một lần và giờ có test riêng.
+
+Một mục `Fail` không chặn — ví dụ thiếu `autounattend.xml` — không hạ kết luận xuống "không
+khởi động được": nó làm hỏng trải nghiệm chứ không làm hỏng việc khởi động.
+
+Toàn bộ phần *đánh giá* là hàm thuần, tách khỏi phần thu thập dữ liệu qua PowerShell, nên
+kiểm thử được mà không cần máy Windows. 24 test cho riêng phần này.
 
 ### Gợi ý bản Linux
 
@@ -159,11 +199,12 @@ src-tauri/src/
   recommend.rs  Engine chấm điểm và xếp hạng
   download.rs   Lấy link chính thức + tải có tiến trình, có resume, tính SHA-256
   writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
+  verify.rs     Kiểm tra USB sau khi ghi: cấu trúc khởi động + đọc lại đối chiếu
   unattend.rs   Sinh autounattend.xml để bỏ qua màn hình cài đặt ban đầu
   lib.rs        Các lệnh Tauri và vòng theo dõi nền
 
 src/
-  App.tsx           Máy trạng thái theo tên bước; luồng Windows 7 bước, Linux 6
+  App.tsx           Máy trạng thái theo tên bước; luồng Windows 8 bước, Linux 7
   types.ts          Khớp 1-1 với struct Rust
   lib/api.ts        Bọc invoke + listen
   components/       Titlebar, các màn hình bước, các mảnh dùng chung
@@ -264,8 +305,8 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 68 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
-  `distro.rs`, `download.rs`, `unattend.rs`, `writer.rs` — chạy xanh
+- 92 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+  `distro.rs`, `download.rs`, `unattend.rs`, `verify.rs`, `writer.rs` — chạy xanh
 - Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
   hiện hành
 - Toàn bộ file Rust qua được kiểm tra cú pháp
@@ -275,7 +316,7 @@ Chưa kiểm chứng được (môi trường dựng ứng dụng không có Win
 
 - Biên dịch trọn vẹn phần Rust có phụ thuộc `tauri`/`reqwest` — hãy chạy `cargo check` lần
   đầu trên máy Windows
-- Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối ra
+- Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối và đoạn đọc lại
   `\\.\PHYSICALDRIVE<n>`** — hãy thử trên một ổ USB không chứa dữ liệu quan trọng
 - Luồng lấy link tải tự động của Microsoft. Đây là phần dễ hỏng nhất vì Microsoft có thể đổi
   bất cứ lúc nào, nên giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang

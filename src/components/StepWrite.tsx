@@ -67,6 +67,7 @@ export function StepWrite({
   format,
   unattend,
   onUnattend,
+  onDone,
 }: {
   disk: UsbDisk | null;
   iso: IsoInfo | null;
@@ -75,6 +76,8 @@ export function StepWrite({
   format: FormatResult | null;
   unattend: UnattendConfig;
   onUnattend: (c: UnattendConfig) => void;
+  /** Bước Kiểm tra chỉ mở ra khi ghi xong, nên trạng thái này phải nằm ở App. */
+  onDone: (v: boolean) => void;
 }) {
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
@@ -84,9 +87,10 @@ export function StepWrite({
 
   useEffect(() => {
     setDone(false);
+    onDone(false);
     setError(null);
     setProg(null);
-  }, [disk?.number, iso?.path]);
+  }, [disk?.number, iso?.path, onDone]);
 
   // Kiến trúc trong file trả lời phải khớp bộ cài, sai là Setup bỏ qua cả file.
   useEffect(() => {
@@ -117,6 +121,7 @@ export function StepWrite({
           unattend,
         });
         setDone(true);
+        onDone(true);
       } finally {
         un();
       }

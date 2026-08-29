@@ -25,12 +25,15 @@ export function StepWriteRaw({
   release,
   admin,
   onAdminRelaunch,
+  onDone,
 }: {
   disk: UsbDisk | null;
   iso: IsoInfo | null;
   release: DistroRelease | null;
   admin: boolean;
   onAdminRelaunch: () => void;
+  /** Bước Kiểm tra chỉ mở ra khi ghi xong, nên trạng thái này phải nằm ở App. */
+  onDone: (v: boolean) => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [running, setRunning] = useState(false);
@@ -42,9 +45,10 @@ export function StepWriteRaw({
   useEffect(() => {
     setConfirmed(false);
     setDone(false);
+    onDone(false);
     setError(null);
     setProg(null);
-  }, [disk?.number, iso?.path]);
+  }, [disk?.number, iso?.path, onDone]);
 
   async function start() {
     if (!disk || !iso) return;
@@ -63,6 +67,7 @@ export function StepWriteRaw({
           confirm_token: token,
         });
         setDone(true);
+        onDone(true);
       } finally {
         un();
       }

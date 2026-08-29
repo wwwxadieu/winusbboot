@@ -331,3 +331,57 @@ export interface RawWriteRequest {
   iso_path: string;
   confirm_token: string;
 }
+
+// ---------------------------------------------------------------------------
+// Kiểm tra khởi động sau khi ghi
+// ---------------------------------------------------------------------------
+
+/** `skipped` là "không đọc được" — **không phải** là không đạt. */
+export type CheckLevel = "pass" | "warn" | "fail" | "skipped";
+
+export interface BootCheck {
+  id: string;
+  group: string;
+  label: string;
+  /** Giá trị đọc được trên chiếc USB này. */
+  value: string;
+  /** Điều kiện để khởi động được. */
+  expectation: string;
+  level: CheckLevel;
+  hint: string | null;
+  /** Không đạt thì firmware chắc chắn không khởi động được từ ổ này. */
+  blocking: boolean;
+}
+
+export type BootVerdict = "ready" | "ready_with_warnings" | "not_bootable";
+
+export interface BootReport {
+  checks: BootCheck[];
+  passed: number;
+  warned: number;
+  failed: number;
+  skipped: number;
+  bootable_uefi: boolean;
+  bootable_legacy: boolean;
+  verdict: BootVerdict;
+  summary: string;
+}
+
+export interface BootCheckRequest {
+  disk_number: number;
+  family: OsFamily;
+  iso_path: string;
+  label: string;
+  expect_unattend: boolean;
+}
+
+export interface ReadbackResult {
+  matched: boolean;
+  /** Số file đã đối chiếu (Windows) hoặc số byte đã đọc lại (Linux). */
+  compared: number;
+  mismatched: string[];
+  missing: string[];
+  expected_sha: string | null;
+  actual_sha: string | null;
+  message: string;
+}

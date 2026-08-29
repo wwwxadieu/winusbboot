@@ -12,6 +12,7 @@ mod ps;
 mod recommend;
 mod unattend;
 mod usb;
+mod verify;
 mod writer;
 
 use error::Result;
@@ -192,6 +193,29 @@ async fn write_iso(app: AppHandle, request: writer::WriteRequest) -> Result<()> 
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Kiểm tra USB sau khi ghi
+// ---------------------------------------------------------------------------
+
+/// Kiểm tra cấu trúc — vài giây, không đọc lại dữ liệu.
+#[tauri::command]
+async fn check_usb_boot(request: verify::BootCheckRequest) -> Result<verify::BootReport> {
+    verify::check_boot(request).await
+}
+
+/// Đọc lại toàn bộ dữ liệu vừa ghi và đối chiếu. Chậm, nên do người dùng bấm.
+#[tauri::command]
+async fn verify_usb_readback(
+    app: AppHandle,
+    request: verify::BootCheckRequest,
+) -> Result<verify::ReadbackResult> {
+    let handle = app.clone();
+    verify::readback(request, move |p| {
+        let _ = handle.emit("verify://progress", &p);
+    })
+    .await
+}
+
 /// Xem trước nội dung autounattend.xml trước khi ghi.
 #[tauri::command]
 fn preview_unattend(config: unattend::UnattendConfig) -> Option<String> {
@@ -274,6 +298,8 @@ pub fn run() {
             format_usb,
             write_iso,
             write_image_raw,
+            check_usb_boot,
+            verify_usb_readback,
             preview_unattend,
         ])
         .run(tauri::generate_context!())

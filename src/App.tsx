@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorText, events } from "./lib/api";
 import { bytes } from "./lib/format";
 import type {
-  DistroRecommendation, FormatResult, HardwareReport, IsoInfo, OsFamily,
+  BootCheckRequest, DistroRecommendation, FormatResult, HardwareReport, IsoInfo, OsFamily,
   PartitionScheme, Recommendation, UnattendConfig, UsbDisk,
 } from "./types";
 import { Titlebar } from "./components/Titlebar";
@@ -16,8 +16,10 @@ import { StepSource, type SourcePlan } from "./components/StepSource";
 import { StepFormat } from "./components/StepFormat";
 import { StepWrite } from "./components/StepWrite";
 import { StepWriteRaw } from "./components/StepWriteRaw";
+import { StepVerify } from "./components/StepVerify";
 
-type StepKey = "os" | "usb" | "hardware" | "release" | "source" | "format" | "write";
+type StepKey =
+  | "os" | "usb" | "hardware" | "release" | "source" | "format" | "write" | "verify";
 
 /**
  * Hai luồng khác nhau ở đúng một bước: Windows có Format riêng, Linux thì không
@@ -26,8 +28,10 @@ type StepKey = "os" | "usb" | "hardware" | "release" | "source" | "format" | "wr
  * Danh sách bước vì thế là dữ liệu chứ không phải một dãy số cố định: thêm bớt
  * bước chỉ cần sửa mảng, mọi thứ khác trong file này tra theo tên bước.
  */
-const WINDOWS_FLOW: StepKey[] = ["os", "usb", "hardware", "release", "source", "format", "write"];
-const LINUX_FLOW: StepKey[] = ["os", "usb", "hardware", "release", "source", "write"];
+const WINDOWS_FLOW: StepKey[] =
+  ["os", "usb", "hardware", "release", "source", "format", "write", "verify"];
+const LINUX_FLOW: StepKey[] =
+  ["os", "usb", "hardware", "release", "source", "write", "verify"];
 
 function meta(key: StepKey, family: OsFamily | null): { title: string; hint: string } {
   switch (key) {
@@ -44,6 +48,8 @@ function meta(key: StepKey, family: OsFamily | null): { title: string; hint: str
       return family === "linux"
         ? { title: "Ghi ra USB", hint: "Ghi nguyên khối" }
         : { title: "Ghi bộ cài", hint: "Chép lên USB" };
+    case "verify":
+      return { title: "Kiểm tra", hint: "Xác nhận boot được" };
   }
 }
 
@@ -88,6 +94,8 @@ export default function App() {
   const [label, setLabel] = useState("WINSETUP");
   const [formatResult, setFormatResult] = useState<FormatResult | null>(null);
   const [unattend, setUnattend] = useState<UnattendConfig>(DEFAULT_UNATTEND);
+
+  const [writeDone, setWriteDone] = useState(false);
 
   const [fatal, setFatal] = useState<string | null>(null);
 
@@ -224,7 +232,8 @@ export default function App() {
     release: picked !== null,
     source: iso !== null,
     format: formatResult !== null,
-    write: false,
+    write: writeDone,
+    verify: false,
   };
 
   const sub: Record<StepKey, string> = {
@@ -236,7 +245,8 @@ export default function App() {
     release: picked ? picked.name : "Chưa chọn",
     source: iso ? iso.path.split(/[\\/]/).pop() ?? "" : "Chưa chọn",
     format: formatResult ? `Xong · ổ ${formatResult.drive_letter}:` : "Chưa format",
-    write: admin ? "Sẵn sàng" : "Cần quyền quản trị",
+    write: writeDone ? "Đã ghi xong" : admin ? "Sẵn sàng" : "Cần quyền quản trị",
+    verify: writeDone ? "Sẵn sàng kiểm tra" : "Chờ ghi xong",
   };
 
   // Không cho nhảy tới bước sau khi bước trước chưa xong — chặn ngay ở giao diện
@@ -259,6 +269,9 @@ export default function App() {
         return family === "linux"
           ? iso !== null && disk !== null
           : formatResult !== null;
+      case "verify":
+        // Chưa ghi xong thì không có gì để đọc lại mà kiểm tra.
+        return writeDone;
     }
   };
 
@@ -267,6 +280,18 @@ export default function App() {
   const at = flow.indexOf(current);
   const next = flow[at + 1];
   const prev = flow[at - 1];
+
+  const bootRequest: BootCheckRequest | null = useMemo(() => {
+    if (!disk || !iso || family === null) return null;
+    return {
+      disk_number: disk.number,
+      family,
+      iso_path: iso.path,
+      label: label.trim() || "WINSETUP",
+      // Luồng Linux không có file trả lời tự động nào để đi tìm.
+      expect_unattend: family === "windows" && unattend.enabled,
+    };
+  }, [disk, iso, family, label, unattend.enabled]);
 
   // Cách lấy bộ cài là chỗ duy nhất hai họ khác nhau ở bước Nguồn, nên chỉ cần
   // gói đúng khác biệt đó lại rồi đưa cho một component dùng chung.
@@ -388,11 +413,17 @@ export default function App() {
 
           {current === "write" && family === "linux" && (
             <StepWriteRaw disk={disk} iso={iso} release={distro}
-                          admin={admin === true} onAdminRelaunch={elevate} />
+                          admin={admin === true} onAdminRelaunch={elevate}
+                          onDone={setWriteDone} />
           )}
           {current === "write" && family !== "linux" && (
             <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
-                       format={formatResult} unattend={unattend} onUnattend={setUnattend} />
+                       format={formatResult} unattend={unattend} onUnattend={setUnattend}
+                       onDone={setWriteDone} />
+          )}
+
+          {current === "verify" && (
+            <StepVerify request={bootRequest} writeDone={writeDone} />
           )}
 
           <div className="actions">

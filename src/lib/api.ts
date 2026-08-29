@@ -3,9 +3,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  CatalogState, DistroRecommendation, DownloadOption, DownloadProgress, FormatRequest,
-  FormatResult, HardwareReport, IsoInfo, RawWriteRequest, Recommendation, ResolvedIso,
-  UnattendConfig, UsbDisk, WriteProgress, WriteRequest,
+  BootCheckRequest, BootReport, CatalogState, DistroRecommendation, DownloadOption,
+  DownloadProgress, FormatRequest, FormatResult, HardwareReport, IsoInfo, RawWriteRequest,
+  Recommendation, ResolvedIso, ReadbackResult, UnattendConfig, UsbDisk, WriteProgress,
+  WriteRequest,
 } from "../types";
 
 export const api = {
@@ -31,6 +32,9 @@ export const api = {
   resolveDistroIso: (distroId: string) =>
     invoke<ResolvedIso>("resolve_distro_iso", { distroId }),
   writeImageRaw: (request: RawWriteRequest) => invoke<void>("write_image_raw", { request }),
+  checkUsbBoot: (request: BootCheckRequest) => invoke<BootReport>("check_usb_boot", { request }),
+  verifyUsbReadback: (request: BootCheckRequest) =>
+    invoke<ReadbackResult>("verify_usb_readback", { request }),
   previewUnattend: (config: UnattendConfig) => invoke<string | null>("preview_unattend", { config }),
 };
 
@@ -45,6 +49,8 @@ export const events = {
     listen<DownloadProgress>("download://progress", (e) => cb(e.payload)),
   onHashProgress: (cb: (p: number) => void): Promise<UnlistenFn> =>
     listen<number>("hash://progress", (e) => cb(e.payload)),
+  onVerifyProgress: (cb: (p: WriteProgress) => void): Promise<UnlistenFn> =>
+    listen<WriteProgress>("verify://progress", (e) => cb(e.payload)),
   onCatalogUpdated: (cb: (s: CatalogState) => void): Promise<UnlistenFn> =>
     listen<CatalogState>("catalog://updated", (e) => cb(e.payload)),
 };

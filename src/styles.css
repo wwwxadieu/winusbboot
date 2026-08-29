@@ -274,6 +274,9 @@ body::before {
 .check__dot[data-s="fixable"] { background: var(--warn); }
 .check__dot[data-s="fail"] { background: var(--danger); }
 .check__dot[data-s="unknown"] { background: var(--text-faint); }
+/* Bước kiểm tra khởi động dùng bộ tên riêng, nhưng cùng bảng màu. */
+.check__dot[data-s="warn"] { background: var(--warn); }
+.check__dot[data-s="skipped"] { background: var(--text-faint); }
 .check__body { min-width: 0; flex: 1; }
 .check__label { font-weight: 600; font-size: 13px; }
 .check__value { color: var(--text-dim); font-size: 12.5px; word-break: break-word; }
@@ -343,6 +346,30 @@ body::before {
 }
 .reasons li[data-t="con"]::before { content: "!"; color: var(--warn); }
 .reasons li[data-t="blk"]::before { content: "\2715"; color: var(--danger); }
+
+/* ------------------------------------------------ Đường khởi động */
+
+.bootway {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--glass-lo);
+}
+.bootway[data-on="true"] {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: color-mix(in srgb, var(--ok) 9%, var(--glass-lo));
+}
+.bootway[data-on="false"] {
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--glass-lo));
+}
+.bootway__mark {
+  width: 22px; height: 22px; flex: none; border-radius: 999px;
+  display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff;
+}
+.bootway[data-on="true"] .bootway__mark { background: var(--ok); }
+.bootway[data-on="false"] .bootway__mark { background: var(--danger); }
+.bootway__title { display: block; font-weight: 600; font-size: 13.5px; }
+.bootway__desc { display: block; font-size: 12px; color: var(--text-dim); margin-top: 2px; }
 
 /* --------------------------------------------------- Thẻ chọn hệ điều hành */
 
