@@ -35,10 +35,32 @@ pub fn official_page(release_id: &str) -> &'static str {
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                   (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
+/// Client cho các request nhỏ: trang HTML, file mã băm, API SKU. Ở đây đặt hạn
+/// chót cho cả request là hợp lý — không có cái nào đáng chạy quá một phút.
 fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(UA)
         .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(Into::into)
+}
+
+/// Client riêng cho việc tải file ISO.
+///
+/// **Không** đặt `.timeout()`. Trong reqwest đó là hạn chót cho *toàn bộ*
+/// request, tính cả thời gian tải hết body — chứ không phải timeout kết nối.
+/// Dùng chung client 60 giây với các request nhỏ nghĩa là mọi file ISO đều bị
+/// huỷ ở giây thứ 60, vì không file 3–6 GB nào tải xong trong ngần ấy thời
+/// gian. Đó chính là lý do tính năng tải tự động chưa bao giờ chạy được.
+///
+/// Thay bằng hai mốc đúng nghĩa: `connect_timeout` cho lúc bắt tay, và
+/// `read_timeout` cho khoảng lặng giữa hai khối dữ liệu. Mạng chậm vẫn tải
+/// được, còn kết nối chết thật thì vẫn bị cắt sau một phút không nhận được gì.
+fn download_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(UA)
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(Into::into)
 }
@@ -240,7 +262,7 @@ pub async fn download<F>(url: &str, dest: &Path, mut on_progress: F) -> Result<P
 where
     F: FnMut(DownloadProgress) + Send,
 {
-    let http = client()?;
+    let http = download_client()?;
 
     // Đã tải được bao nhiêu từ lần trước.
     let existing = tokio::fs::metadata(dest).await.map(|m| m.len()).unwrap_or(0);
@@ -253,9 +275,22 @@ where
 
     let resuming = resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
     if !resp.status().is_success() {
+        let code = resp.status().as_u16();
+        // Mã trần không nói được gì cho người dùng. Ba trường hợp hay gặp nhất
+        // đều có cách xử lý khác nhau, nên tách ra thành lời khuyên cụ thể.
+        let hint = match code {
+            403 => " Máy chủ từ chối yêu cầu — một số nhà phát hành chặn tải trực tiếp \
+                    từ ngoài mạng gia đình. Hãy bấm \"Mở trang tải chính thức\" để tải \
+                    qua trình duyệt rồi quay lại chọn file.",
+            404 => " Không còn file này trên máy chủ — nhiều khả năng bản vá mới đã ra \
+                    và bản cũ bị gỡ. Hãy tải từ trang chính thức.",
+            429 | 503 => " Máy chủ đang quá tải hoặc giới hạn lượt tải. Thử lại sau vài \
+                          phút, hoặc tải từ trang chính thức.",
+            _ => "",
+        };
         return Err(AppError::new(
             "http",
-            format!("Máy chủ trả về mã {} khi tải file.", resp.status()),
+            format!("Máy chủ trả về mã {code} khi tải file.{hint}"),
         ));
     }
 
@@ -440,6 +475,93 @@ pub async fn resolve_distro_iso(checksum_url: &str, want: &str) -> Result<Resolv
 }
 
 #[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    /// Máy chủ tí hon nhả `n` byte, mỗi byte cách nhau `gap`. Tổng thời gian
+    /// truyền cố ý dài hơn hạn chót tổng mà test đặt ra, để tái hiện đúng cảnh
+    /// một file ISO vài GB tải lâu hơn một phút.
+    async fn trickle(n: usize, gap: std::time::Duration) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else { return };
+            // Đọc cho hết dòng request rồi mới trả lời.
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {n}\r\n\r\n");
+            if sock.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            for _ in 0..n {
+                if sock.write_all(b"x").await.is_err() {
+                    return;
+                }
+                let _ = sock.flush().await;
+                tokio::time::sleep(gap).await;
+            }
+        });
+
+        format!("http://{addr}/iso")
+    }
+
+    const GAP: std::time::Duration = std::time::Duration::from_millis(120);
+    const CHUNKS: usize = 25; // ~3 giây, dài hơn hạn chót 1 giây bên dưới
+
+    /// Tái hiện lỗi: `.timeout()` của reqwest là hạn chót cho **toàn bộ**
+    /// request, nên một lần truyền dài hơn nó luôn bị huỷ giữa chừng — dù dữ
+    /// liệu vẫn đang chảy đều. Đây đúng là thứ đã xảy ra với mọi file ISO.
+    #[tokio::test]
+    async fn a_total_deadline_kills_a_transfer_that_is_still_flowing() {
+        let url = trickle(CHUNKS, GAP).await;
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(1))
+            .build()
+            .unwrap();
+
+        let err = async {
+            let resp = http.get(&url).send().await?;
+            resp.bytes().await
+        }
+        .await
+        .expect_err("hạn chót tổng phải cắt ngang lần truyền này");
+
+        assert!(err.is_timeout(), "phải là lỗi timeout, nhận được: {err}");
+    }
+
+    /// Và bản sửa: cùng lần truyền đó, nhưng hạn chót đặt vào **khoảng lặng
+    /// giữa hai khối** thay vì vào tổng thời gian, thì chạy trọn vẹn.
+    #[tokio::test]
+    async fn a_read_timeout_lets_a_slow_but_healthy_transfer_finish() {
+        let url = trickle(CHUNKS, GAP).await;
+        let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .read_timeout(std::time::Duration::from_secs(1))
+            .build()
+            .unwrap();
+
+        let body = http.get(&url).send().await.unwrap().bytes().await
+            .expect("truyền chậm nhưng đều thì phải xong");
+        assert_eq!(body.len(), CHUNKS, "phải nhận đủ số byte");
+    }
+
+    /// Client dùng để tải phải là loại thứ hai. Kiểm tra bằng chính nó thay vì
+    /// tin vào cấu hình: đây là chỗ đã hỏng một lần rồi.
+    #[tokio::test]
+    async fn the_real_download_client_has_no_total_deadline() {
+        let url = trickle(CHUNKS, GAP).await;
+        let http = download_client().unwrap();
+
+        let body = http.get(&url).send().await.unwrap().bytes().await
+            .expect("download_client() không được đặt hạn chót cho cả request");
+        assert_eq!(body.len(), CHUNKS);
+    }
+}
+
+#[cfg(test)]
 mod sku_tests {
     use super::*;
 
@@ -552,5 +674,43 @@ abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd *ubuntu-24.04.3
     fn malformed_hashes_are_rejected() {
         let body = "deadbeef *ubuntu-24.04.3-desktop-amd64.iso\n";
         assert_eq!(pick_iso(body, "desktop-amd64.iso"), None);
+    }
+}
+
+#[cfg(test)]
+mod live_probe {
+    use super::*;
+
+    /// Giải link thật rồi tải thử vài KB đầu, để chắc URL dựng ra tải được.
+    ///
+    /// Có gọi mạng nên không chạy trong CI — đây là công cụ bảo trì, chạy tay
+    /// mỗi khi nghi một địa chỉ trong danh mục đã hỏng:
+    ///
+    /// ```text
+    /// cargo test --manifest-path src-tauri/Cargo.toml live_probe -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "gọi mạng thật"]
+    async fn resolved_urls_are_actually_downloadable() {
+        for r in crate::distro::builtin().into_iter().filter(|r| r.checksum_url.is_some()) {
+            let url = r.checksum_url.clone().unwrap();
+            match resolve_distro_iso(&url, &r.iso_match).await {
+                Ok(iso) => {
+                    let head = client().unwrap()
+                        .get(&iso.url)
+                        .header(reqwest::header::RANGE, "bytes=0-2047")
+                        .send().await;
+                    match head {
+                        Ok(resp) => {
+                            let code = resp.status().as_u16();
+                            let n = resp.bytes().await.map(|b| b.len()).unwrap_or(0);
+                            eprintln!("{:<20} http={code} {n} byte  {}", r.id, iso.filename);
+                        }
+                        Err(e) => eprintln!("{:<20} TẢI HỎNG  {e}", r.id),
+                    }
+                }
+                Err(e) => eprintln!("{:<20} GIẢI HỎNG  {}", r.id, e.message),
+            }
+        }
     }
 }

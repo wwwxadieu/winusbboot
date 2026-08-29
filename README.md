@@ -140,6 +140,22 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
+### Hai mốc thời gian khác nhau khi tải
+
+`.timeout()` của reqwest là hạn chót cho **toàn bộ** request, tính cả thời gian tải hết
+body — không phải timeout kết nối. Dùng chung một client 60 giây cho cả request nhỏ lẫn
+việc tải ISO nghĩa là mọi file đều bị huỷ ở giây thứ 60, vì không file 3–6 GB nào tải xong
+trong ngần ấy thời gian. Đây là lý do tính năng tải tự động chưa bao giờ chạy được, với
+cả Windows lẫn Linux.
+
+Nên có hai client tách bạch: `client()` cho các request nhỏ (trang HTML, file mã băm) giữ
+hạn chót 60 giây, còn `download_client()` bỏ hẳn hạn chót tổng và thay bằng
+`connect_timeout` cho lúc bắt tay và `read_timeout` cho khoảng lặng giữa hai khối dữ liệu.
+Mạng chậm vẫn tải được; kết nối chết thật vẫn bị cắt sau một phút không nhận được gì.
+
+Ba test khoá lại đúng sự khác biệt này, dùng một máy chủ tí hon nhỏ giọt dữ liệu ngay
+trong test — không gọi mạng, chạy hết 3 giây.
+
 ### Link tải Linux tra qua file mã băm
 
 Ứng dụng **không** ghi cứng link ISO của distro. Tên file đổi theo từng bản vá nhỏ —
@@ -354,7 +370,7 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 104 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+- 107 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
   `distro.rs`, `download.rs`, `languages.rs`, `unattend.rs`, `verify.rs`, `writer.rs` —
   chạy xanh
 - Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
