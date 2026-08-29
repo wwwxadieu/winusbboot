@@ -102,9 +102,13 @@ pub struct IsoInfo {
     pub bootable_uefi: bool,
 }
 
-/// Bước format chỉ có hai chặng; bước ghi có sáu.
+/// Bước format chỉ có hai chặng; bước ghi Windows có sáu; ghi raw có ba.
 pub const FORMAT_STAGES: u32 = 2;
 pub const WRITE_STAGES: u32 = 6;
+pub const RAW_WRITE_STAGES: u32 = 3;
+
+/// Bộ cài Windows 11 không nằm vừa ổ dưới 8 GB.
+const WINDOWS_MIN_USB: u64 = 8 * 1024 * 1024 * 1024;
 
 pub fn token_for(disk: &usb::UsbDisk) -> String {
     format!(
@@ -116,7 +120,15 @@ pub fn token_for(disk: &usb::UsbDisk) -> String {
 }
 
 /// Hàng rào an toàn cuối cùng trước mọi thao tác ghi lên ổ.
-async fn guard(disk_number: u32, confirm_token: &str, iso_path: Option<&str>) -> Result<usb::UsbDisk> {
+/// `min_size` là dung lượng tối thiểu của ổ USB cho luồng đang gọi. Bộ cài
+/// Windows cần 8 GB, còn ISO Linux thì nhiều bản nằm gọn trong 2 GB — ghi cứng
+/// một ngưỡng chung sẽ từ chối oan những chiếc USB hoàn toàn dùng được.
+async fn guard(
+    disk_number: u32,
+    confirm_token: &str,
+    iso_path: Option<&str>,
+    min_size: u64,
+) -> Result<usb::UsbDisk> {
     let disks = usb::list().await?;
     let disk = disks
         .into_iter()
@@ -139,12 +151,13 @@ async fn guard(disk_number: u32, confirm_token: &str, iso_path: Option<&str>) ->
             "Ổ USB ở vị trí này đã thay đổi kể từ lúc bạn chọn. Hãy chọn lại để chắc chắn ghi đúng ổ.",
         ));
     }
-    if !disk.is_large_enough() {
+    if disk.size < min_size {
         return Err(AppError::new(
             "too_small",
             format!(
-                "Ổ chỉ có {:.1} GB, cần tối thiểu 8 GB cho bộ cài Windows.",
-                disk.size as f64 / 1024.0 / 1024.0 / 1024.0
+                "Ổ chỉ có {:.1} GB, cần tối thiểu {:.1} GB cho bộ cài này.",
+                disk.size as f64 / 1024.0 / 1024.0 / 1024.0,
+                min_size as f64 / 1024.0 / 1024.0 / 1024.0
             ),
         ));
     }
@@ -258,7 +271,7 @@ where
     };
 
     emit("check", 1, 0.0, "Đang kiểm tra ổ đĩa…".into());
-    let disk = guard(req.disk_number, &req.confirm_token, None).await?;
+    let disk = guard(req.disk_number, &req.confirm_token, None, WINDOWS_MIN_USB).await?;
     emit(
         "check",
         1,
@@ -334,7 +347,7 @@ where
 
     // --- 1. Kiểm tra an toàn -------------------------------------------
     emit("check", 1, 0.0, "Đang kiểm tra ổ đĩa và file ISO…".into(), None);
-    let disk = guard(req.disk_number, &req.confirm_token, Some(&req.iso_path)).await?;
+    let disk = guard(req.disk_number, &req.confirm_token, Some(&req.iso_path), WINDOWS_MIN_USB).await?;
     let dst_letter = boot_letter(&disk, &req.label)?;
     let iso = inspect_iso(&req.iso_path).await?;
 
@@ -764,3 +777,182 @@ mod tests {
         assert_eq!(escape("D:\\it's here\\win.iso"), "D:\\it''s here\\win.iso");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Ghi ảnh đĩa nguyên khối (cho ISO Linux)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawWriteRequest {
+    pub disk_number: u32,
+    pub iso_path: String,
+    pub confirm_token: String,
+}
+
+/// Ghi nguyên khối file ISO ra ổ USB — tương đương `dd` trên Linux.
+///
+/// ISO của các distro là *hybrid ISO*: bảng phân vùng và mã khởi động nằm ngay
+/// trong chính file ảnh đĩa. Chép từng file ra một phân vùng FAT32 như cách làm
+/// với bộ cài Windows sẽ hỏng, vì bootloader (isolinux/GRUB) trông chờ đúng bố
+/// cục ISO9660 và đúng nhãn volume mà nó được dựng cùng — máy sẽ báo không tìm
+/// thấy thiết bị khởi động, hoặc dừng giữa chừng ở initramfs.
+///
+/// Vì ghi từ byte 0 nên thao tác này xoá luôn bảng phân vùng cũ: không cần và
+/// cũng không được format trước, bước Format vì thế không có trong luồng Linux.
+pub async fn write_image_raw<F>(req: RawWriteRequest, mut on_progress: F) -> Result<()>
+where
+    F: FnMut(WriteProgress) + Send,
+{
+    let mut emit = |stage: &'static str, idx: u32, pct: f64, msg: String, detail: Option<String>| {
+        on_progress(WriteProgress {
+            stage: stage.to_string(),
+            stage_index: idx,
+            total_stages: RAW_WRITE_STAGES,
+            percent: pct,
+            message: msg,
+            detail,
+        });
+    };
+
+    // --- 1. Kiểm tra an toàn ---------------------------------------------
+    emit("check", 1, 0.0, "Đang kiểm tra ổ đĩa và file ảnh…".into(), None);
+
+    let iso_size = std::fs::metadata(&req.iso_path).map(|m| m.len()).unwrap_or(0);
+    if iso_size == 0 {
+        return Err(AppError::new("no_iso", "Không đọc được file ISO đã chọn."));
+    }
+    // Ghi nguyên khối nên ổ chỉ cần chứa vừa đúng file ảnh, không cần dư ra như
+    // luồng Windows (vốn còn phải tách install.wim ngay trên ổ).
+    let disk = guard(req.disk_number, &req.confirm_token, None, iso_size).await?;
+
+    emit(
+        "check",
+        1,
+        100.0,
+        format!(
+            "Sẽ ghi đè toàn bộ {} ({:.1} GB).",
+            disk.model,
+            disk.size as f64 / 1024.0 / 1024.0 / 1024.0
+        ),
+        None,
+    );
+
+    // --- 2. Ghi ------------------------------------------------------------
+    emit("raw", 2, 0.0, "Đang ghi ảnh đĩa ra USB…".into(), None);
+
+    let script = SCRIPT_RAW_WRITE
+        .replace("%%DISK%%", &req.disk_number.to_string())
+        .replace("%%ISO%%", &escape(&req.iso_path));
+
+    let mut last_emit = std::time::Instant::now();
+    let mut written: u64 = 0;
+
+    ps::run_streaming(&script, |line| {
+        let Some((done, total)) = parse_pair(line, "GWU:RAW ") else { return };
+        written = done;
+        // Giới hạn nhịp báo để không dội hàng nghìn sự kiện lên giao diện.
+        if last_emit.elapsed().as_millis() >= 150 {
+            last_emit = std::time::Instant::now();
+            emit(
+                "raw",
+                2,
+                done as f64 / total.max(1) as f64 * 100.0,
+                format!("Đang ghi ảnh đĩa · {} / {}", human(done), human(total)),
+                None,
+            );
+        }
+    })
+    .await?;
+
+    if written == 0 {
+        return Err(AppError::new(
+            "raw_write_failed",
+            "Không ghi được byte nào ra ổ USB. Hãy chắc chắn ứng dụng đang chạy với quyền quản trị \
+             và không có cửa sổ Explorer nào đang mở ổ này.",
+        ));
+    }
+
+    emit("raw", 2, 100.0, format!("Đã ghi {}.", human(written)), None);
+
+    // --- 3. Đẩy hết bộ đệm ra thiết bị ------------------------------------
+    //
+    // Windows đệm ghi rất mạnh: rút USB ngay sau khi thanh tiến trình đầy có
+    // thể mất vài trăm MB cuối. Bước này gọi lại ổ về trạng thái online, buộc
+    // hệ điều hành đọc lại bảng phân vùng mới và xả bộ đệm.
+    emit("flush", 3, 0.0, "Đang đẩy dữ liệu còn trong bộ đệm ra USB…".into(), None);
+    let _ = ps::run(&SCRIPT_RAW_FLUSH.replace("%%DISK%%", &req.disk_number.to_string())).await;
+    emit("flush", 3, 100.0, "USB đã sẵn sàng để rút ra.".into(), None);
+
+    Ok(())
+}
+
+/// Ghi nguyên khối file ISO ra `\\.\PHYSICALDRIVE<n>`.
+///
+/// Ba việc phải làm đúng thứ tự, thiếu bước nào cũng hỏng:
+///
+/// 1. `Clear-Disk` để Windows nhả mọi khoá volume đang giữ trên ổ. Không xoá
+///    trước thì lệnh mở thiết bị bị từ chối truy cập.
+/// 2. Đưa ổ về offline, nếu không Windows sẽ thấy phân vùng mới xuất hiện giữa
+///    chừng và gắn nó vào trong lúc đang ghi dở.
+/// 3. Ghi theo bội số sector. Ghi thẳng ra thiết bị không cho phép độ dài lẻ,
+///    nên khối cuối phải được đệm 0 cho tròn — với hybrid ISO thì phần đuôi vốn
+///    đã là vùng đệm nên đệm thêm không ảnh hưởng gì.
+const SCRIPT_RAW_WRITE: &str = r#"
+$ErrorActionPreference = 'Stop'
+$n = %%DISK%%
+$iso = '%%ISO%%'
+
+$disk = Get-Disk -Number $n -ErrorAction Stop
+if ($disk.BusType -ne 'USB') { throw 'Ổ đĩa này không phải USB — đã dừng.' }
+if ($disk.IsSystem -or $disk.IsBoot) { throw 'Ổ đĩa này là ổ hệ thống — đã dừng.' }
+
+Clear-Disk -Number $n -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
+Set-Disk -Number $n -IsOffline $true -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
+$src = $null
+$dst = $null
+try {
+  $src = [System.IO.File]::OpenRead($iso)
+  $total = $src.Length
+  $dst = New-Object System.IO.FileStream(
+    "\\.\PHYSICALDRIVE$n",
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Write,
+    [System.IO.FileShare]::ReadWrite)
+
+  $size = 4194304
+  $buf = New-Object byte[] $size
+  $done = 0L
+  $mark = 0L
+
+  while (($read = $src.Read($buf, 0, $size)) -gt 0) {
+    $len = $read
+    if ($len % 512 -ne 0) {
+      $len = [int]([math]::Ceiling($len / 512.0)) * 512
+      [Array]::Clear($buf, $read, $len - $read)
+    }
+    $dst.Write($buf, 0, $len)
+    $done += $read
+    if (($done - $mark) -ge 16777216) {
+      Write-Output "GWU:RAW $done $total"
+      $mark = $done
+    }
+  }
+  $dst.Flush($true)
+  Write-Output "GWU:RAW $total $total"
+}
+finally {
+  if ($dst) { $dst.Dispose() }
+  if ($src) { $src.Dispose() }
+}
+"#;
+
+/// Đưa ổ về online và buộc Windows đọc lại bảng phân vùng vừa ghi.
+const SCRIPT_RAW_FLUSH: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$n = %%DISK%%
+Set-Disk -Number $n -IsOffline $false
+Start-Sleep -Milliseconds 400
+Update-Disk -Number $n
+"#;

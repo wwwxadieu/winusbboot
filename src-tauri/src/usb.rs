@@ -34,11 +34,6 @@ impl UsbDisk {
     pub fn is_writable_target(&self) -> bool {
         !self.is_boot && !self.is_system && !self.is_readonly && self.bus_type == "USB"
     }
-
-    /// Dung lượng tối thiểu để chứa được bộ cài Windows 11 hiện nay.
-    pub fn is_large_enough(&self) -> bool {
-        self.size >= 8 * 1024 * 1024 * 1024
-    }
 }
 
 /// Đoạn script dựng danh sách ổ USB. Dùng chung cho cả lần quét một lần lẫn

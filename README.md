@@ -1,13 +1,24 @@
 # Get WinUSB
 
-Ứng dụng Windows tự nhận diện ổ USB đang cắm, quét cấu hình máy, gợi ý phiên bản
-Windows phù hợp nhất rồi tạo luôn USB cài đặt.
+Ứng dụng Windows tự nhận diện ổ USB đang cắm, quét cấu hình máy, gợi ý hệ điều hành
+phù hợp nhất — Windows hoặc một trong chín bản Linux — rồi tạo luôn USB cài đặt.
 
 Tauri 2 + React 18 + TypeScript. Backend Rust, giao diện kính xếp lớp có chế độ sáng/tối.
 
 ---
 
 ## Ứng dụng làm gì
+
+**0. Chọn hệ điều hành** — bước đầu tiên, và nó quyết định hình dạng của mọi bước sau.
+Hai họ hệ điều hành được tạo USB theo hai cách khác hẳn nhau, không phải một cách có
+tham số. Xem "Vì sao ISO Linux phải ghi nguyên khối" bên dưới.
+
+| | Windows | Linux |
+|---|---|---|
+| Cách ghi | Chép file lên phân vùng đã format | Ghi nguyên khối, tương đương `dd` |
+| Bước Format | Có, tách riêng, có xác nhận | Không — thao tác ghi đã bao gồm |
+| Cài đặt tự động | `autounattend.xml` | Không có |
+| Ổ USB tối thiểu | 8 GB | Vừa đúng cỡ file ISO |
 
 **1. Nhận diện USB** — một tiến trình PowerShell chạy nền suốt vòng đời ứng dụng, cứ 3 giây
 in danh sách ổ USB dưới dạng JSON. Rust đọc từng dòng và chỉ đẩy sự kiện lên giao diện khi
@@ -66,6 +77,60 @@ bên trong một nút "tạo USB" chung.
 `autounattend.xml`. Tiến trình hiện theo byte thực tế ở cả sáu chặng, kể cả khi đang chép
 một file 5 GB đơn lẻ.
 
+### Gợi ý bản Linux
+
+Cùng một `HardwareReport` đã quét cho Windows, chấm theo thước đo khác. Windows hỏi
+"máy có TPM 2.0 và CPU nằm trong danh sách hỗ trợ không"; Linux thì gần như máy nào cũng
+cài được, nên câu hỏi thật là **"bản nào chạy mượt trên đúng lượng RAM này"**.
+
+Chín bản trong danh mục: Ubuntu 24.04 LTS, Linux Mint 22 (Cinnamon và XFCE), Debian 13,
+Fedora Workstation 43, Pop!_OS 22.04 LTS, Zorin OS 17, Lubuntu 24.04 LTS, Arch Linux.
+
+Ba ranh giới engine phải phân biệt cho đúng:
+
+- **"Đủ RAM tối thiểu" khác "đủ RAM để dùng thoải mái".** Gộp hai mốc này lại thì máy
+  4 GB sẽ được gợi ý GNOME, rồi người dùng kết luận "Linux chạy chậm". Tính theo tỉ lệ
+  chứ không theo bậc: máy 7,5 GB và máy 4 GB đều "dưới mức khuyến nghị 8 GB", nhưng trải
+  nghiệm của hai máy đó khác nhau rất xa.
+- **Secure Boot đang bật là một thiết lập BIOS, không phải rào chặn.** Bản không có shim
+  ký sẵn (Arch) chỉ bị trừ điểm khi máy *đang bật* Secure Boot. Máy chạy BIOS cũ đọc ra
+  `None` — coi `None` như "đang bật" sẽ cảnh báo sai cho mọi máy đời cũ.
+- **"Desktop nhẹ" khác "không có desktop nào cả".** Arch được xếp `Light` vì nó không có
+  desktop, không phải vì desktop của nó nhẹ. Thưởng điểm "desktop nhẹ" cho nó sẽ đẩy đúng
+  bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
+  lỗi này đã xảy ra một lần và giờ có test khoá lại.
+
+### Link tải Linux tra qua file mã băm
+
+Ứng dụng **không** ghi cứng link ISO của distro. Tên file đổi theo từng bản vá nhỏ —
+`ubuntu-24.04.2` thành `24.04.3` là link cũ chết ngay, mà chết im lặng: người dùng chỉ
+thấy "tải thất bại" chứ không biết vì sao.
+
+Thay vào đó danh mục lưu địa chỉ file `SHA256SUMS`, vốn nằm ở một thư mục cố định. Đọc
+file đó một lần được cả hai thứ: tên file ISO hiện hành, và mã băm chính thức để đối
+chiếu ngay sau khi tải xong. Bản vá nhỏ mới ra thì tự tải đúng file mới, không phải sửa
+mã. Sáu trong chín bản dùng được đường này; ba bản còn lại (Fedora, Pop!_OS, Zorin) phát
+link qua trang trung gian nên chỉ mở trang chính thức.
+
+Đối chiếu mã băm chạy tự động sau khi tải, không đợi người dùng bấm: file ISO tải dở sẽ
+ghi ra một chiếc USB không boot được, và lúc đó rất khó đoán nguyên nhân nằm ở đâu.
+
+### Vì sao ISO Linux phải ghi nguyên khối
+
+ISO của các distro là *hybrid ISO*: bảng phân vùng và mã khởi động nằm ngay trong chính
+file ảnh đĩa. Chép từng file ra một phân vùng FAT32 như cách làm với bộ cài Windows sẽ
+hỏng, vì bootloader (isolinux/GRUB) trông chờ đúng bố cục ISO9660 và đúng nhãn volume mà
+nó được dựng cùng — máy sẽ báo không tìm thấy thiết bị khởi động, hoặc dừng giữa chừng ở
+initramfs.
+
+Vì ghi từ byte 0 nên thao tác này xoá luôn bảng phân vùng cũ. Không cần và cũng không
+được format trước, nên **bước Format không có trong luồng Linux** — và ô xác nhận xoá dữ
+liệu chuyển sang nằm ngay ở bước ghi, vì đó mới là lúc dữ liệu biến mất.
+
+Trên Windows, ghi thẳng ra `\\.\PHYSICALDRIVE<n>` cần ba việc đúng thứ tự: `Clear-Disk`
+để hệ điều hành nhả khoá volume, đưa ổ về offline để Windows không gắn phân vùng mới vào
+giữa chừng, rồi ghi theo bội số sector (khối cuối được đệm 0 cho tròn).
+
 ### Bỏ qua màn hình cài đặt ban đầu
 
 Windows Setup tự tìm file `autounattend.xml` ở thư mục gốc của thiết bị rời. Ứng dụng sinh
@@ -88,19 +153,20 @@ src-tauri/src/
   hardware.rs   Quét CPU/RAM/TPM/Secure Boot/firmware
   cpu.rs        Suy luận CPU có nằm trong danh sách hỗ trợ Windows 11 không
   catalog.rs    Danh mục các bản Windows + tính vòng đời theo ngày hiện tại
+  distro.rs     Danh mục hệ điều hành mã nguồn mở + engine chấm điểm theo RAM
   catalog_sync.rs  Đọc bảng vòng đời từ trang release-health của Microsoft
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
   recommend.rs  Engine chấm điểm và xếp hạng
   download.rs   Lấy link chính thức + tải có tiến trình, có resume, tính SHA-256
-  writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect
+  writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
   unattend.rs   Sinh autounattend.xml để bỏ qua màn hình cài đặt ban đầu
   lib.rs        Các lệnh Tauri và vòng theo dõi nền
 
 src/
-  App.tsx           Máy trạng thái 6 bước
+  App.tsx           Máy trạng thái theo tên bước; luồng Windows 7 bước, Linux 6
   types.ts          Khớp 1-1 với struct Rust
   lib/api.ts        Bọc invoke + listen
-  components/       Titlebar, 6 màn hình bước, các mảnh dùng chung
+  components/       Titlebar, các màn hình bước, các mảnh dùng chung
   styles.css        Hệ thống thiết kế (biến CSS, sáng/tối)
 ```
 
@@ -198,8 +264,10 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 40 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
-  `writer.rs` — chạy xanh
+- 68 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+  `distro.rs`, `download.rs`, `unattend.rs`, `writer.rs` — chạy xanh
+- Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
+  hiện hành
 - Toàn bộ file Rust qua được kiểm tra cú pháp
 - Frontend TypeScript qua `tsc` ở chế độ `strict` không lỗi
 
@@ -207,7 +275,8 @@ Chưa kiểm chứng được (môi trường dựng ứng dụng không có Win
 
 - Biên dịch trọn vẹn phần Rust có phụ thuộc `tauri`/`reqwest` — hãy chạy `cargo check` lần
   đầu trên máy Windows
-- Các đoạn PowerShell chạy trên máy thật
+- Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối ra
+  `\\.\PHYSICALDRIVE<n>`** — hãy thử trên một ổ USB không chứa dữ liệu quan trọng
 - Luồng lấy link tải tự động của Microsoft. Đây là phần dễ hỏng nhất vì Microsoft có thể đổi
   bất cứ lúc nào, nên giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang
   tải chính thức trong trình duyệt.
@@ -231,3 +300,24 @@ Cập nhật tới tháng 8/2026. Muốn thêm bản mới chỉ cần sửa m�
 
 Windows 11 26H2 dự kiến phát hành tháng 10/2026 — khi có build chính thức thì thêm vào đầu
 danh mục và cho `win11-25h2` lùi một bậc ưu tiên trong `recommend.rs`.
+
+---
+
+## Dữ liệu bản Linux
+
+Bảng nhúng chốt ngày 29/08/2026, khai báo trong `CATALOG` của `src-tauri/src/distro.rs`.
+Khác với danh mục Windows, bảng này **không tự đồng bộ** — các dự án Linux ra bản mới theo
+nhịp riêng, không có một trang vòng đời chung nào để đọc. Số hiệu phiên bản và ngày hết hỗ
+trợ vì thế cần rà lại theo định kỳ; link tải thì luôn đúng nhờ cách tra qua file mã băm.
+
+| Bản | Desktop | RAM khuyến nghị | Hết hỗ trợ |
+|---|---|---|---|
+| Ubuntu 24.04 LTS | GNOME | 8 GB | 31/05/2029 |
+| Linux Mint 22 Cinnamon | Cinnamon | 4 GB | 30/04/2029 |
+| Linux Mint 22 XFCE | XFCE | 3 GB | 30/04/2029 |
+| Debian 13 "Trixie" | GNOME | 4 GB | 30/06/2030 |
+| Fedora Workstation 43 | GNOME | 8 GB | 01/12/2026 |
+| Pop!_OS 22.04 LTS | COSMIC | 8 GB | 30/04/2027 |
+| Zorin OS 17 Core | GNOME tuỳ biến | 4 GB | 30/04/2027 |
+| Lubuntu 24.04 LTS | LXQt | 2 GB | 30/04/2027 |
+| Arch Linux | không có sẵn | 2 GB | rolling |

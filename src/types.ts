@@ -256,3 +256,78 @@ export interface DownloadOption {
 }
 
 export interface AppError { code: string; message: string }
+
+// ---------------------------------------------------------------------------
+// Hệ điều hành mã nguồn mở
+// ---------------------------------------------------------------------------
+
+/** Họ hệ điều hành người dùng chọn ở bước đầu; quyết định hình dạng cả luồng sau đó. */
+export type OsFamily = "windows" | "linux";
+
+export type DesktopWeight = "light" | "medium" | "heavy";
+
+/** "signed" = có shim ký sẵn, cắm vào máy đang bật Secure Boot là boot thẳng. */
+export type SecureBootSupport = "signed" | "unsigned";
+
+export interface DistroRelease {
+  id: string;
+  name: string;
+  family: string;
+  version: string;
+  desktop: string;
+  weight: DesktopWeight;
+  /** Dạng ISO YYYY-MM-DD. */
+  released: string;
+  /** `null` với bản rolling release. */
+  end_of_support: string | null;
+  lts: boolean;
+  rolling: boolean;
+  min_ram_gb: number;
+  /** RAM để dùng thoải mái — khác với mức tối thiểu chỉ đủ cài. */
+  rec_ram_gb: number;
+  min_disk_gb: number;
+  architectures: string[];
+  secure_boot: SecureBootSupport;
+  iso_size: number;
+  audience: string;
+  tagline: string;
+  download_page: string;
+  /** `null` nghĩa là phải tải thủ công qua trang chính thức. */
+  checksum_url: string | null;
+  iso_match: string;
+}
+
+export interface DistroCandidate {
+  release: DistroRelease;
+  score: number;
+  /** Dùng chung tên với Verdict của Windows nên tái dùng được đúng bộ nhãn màu. */
+  verdict: Verdict;
+  pros: string[];
+  cons: string[];
+  blockers: string[];
+  support_label: string;
+  expired: boolean;
+}
+
+export interface DistroRecommendation {
+  candidates: DistroCandidate[];
+  best: string;
+  summary: string;
+  architecture: string;
+  ram_gb: number;
+  /** Ngày chốt của bảng nhúng — danh mục distro không tự đồng bộ. */
+  catalog_snapshot: string;
+}
+
+/** Kết quả tra link tải qua file mã băm chính thức của distro. */
+export interface ResolvedIso {
+  url: string;
+  filename: string;
+  sha256: string;
+}
+
+export interface RawWriteRequest {
+  disk_number: number;
+  iso_path: string;
+  confirm_token: string;
+}

@@ -2,28 +2,50 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorText, events } from "./lib/api";
 import { bytes } from "./lib/format";
 import type {
-  FormatResult, HardwareReport, IsoInfo, PartitionScheme, Recommendation,
-  UnattendConfig, UsbDisk,
+  DistroRecommendation, FormatResult, HardwareReport, IsoInfo, OsFamily,
+  PartitionScheme, Recommendation, UnattendConfig, UsbDisk,
 } from "./types";
 import { Titlebar } from "./components/Titlebar";
 import { Note } from "./components/ui";
+import { StepOs } from "./components/StepOs";
 import { StepUsb } from "./components/StepUsb";
 import { StepHardware } from "./components/StepHardware";
 import { StepRecommend } from "./components/StepRecommend";
-import { StepSource } from "./components/StepSource";
+import { StepDistro } from "./components/StepDistro";
+import { StepSource, type SourcePlan } from "./components/StepSource";
 import { StepFormat } from "./components/StepFormat";
 import { StepWrite } from "./components/StepWrite";
+import { StepWriteRaw } from "./components/StepWriteRaw";
 
-type StepId = 0 | 1 | 2 | 3 | 4 | 5;
+type StepKey = "os" | "usb" | "hardware" | "release" | "source" | "format" | "write";
 
-const STEPS = [
-  { title: "Ổ USB", hint: "Chọn ổ để ghi" },
-  { title: "Phần cứng", hint: "Quét cấu hình máy" },
-  { title: "Phiên bản", hint: "Chọn bản Windows" },
-  { title: "Bộ cài", hint: "Chọn hoặc tải ISO" },
-  { title: "Format", hint: "Xoá và chia phân vùng" },
-  { title: "Ghi bộ cài", hint: "Chép lên USB" },
-];
+/**
+ * Hai luồng khác nhau ở đúng một bước: Windows có Format riêng, Linux thì không
+ * — ghi nguyên khối đã xoá và dựng lại ổ rồi (xem `writer::write_image_raw`).
+ *
+ * Danh sách bước vì thế là dữ liệu chứ không phải một dãy số cố định: thêm bớt
+ * bước chỉ cần sửa mảng, mọi thứ khác trong file này tra theo tên bước.
+ */
+const WINDOWS_FLOW: StepKey[] = ["os", "usb", "hardware", "release", "source", "format", "write"];
+const LINUX_FLOW: StepKey[] = ["os", "usb", "hardware", "release", "source", "write"];
+
+function meta(key: StepKey, family: OsFamily | null): { title: string; hint: string } {
+  switch (key) {
+    case "os": return { title: "Hệ điều hành", hint: "Windows hay Linux" };
+    case "usb": return { title: "Ổ USB", hint: "Chọn ổ để ghi" };
+    case "hardware": return { title: "Phần cứng", hint: "Quét cấu hình máy" };
+    case "release":
+      return family === "linux"
+        ? { title: "Bản Linux", hint: "Chọn bản phân phối" }
+        : { title: "Phiên bản", hint: "Chọn bản Windows" };
+    case "source": return { title: "Bộ cài", hint: "Chọn hoặc tải ISO" };
+    case "format": return { title: "Format", hint: "Xoá và chia phân vùng" };
+    case "write":
+      return family === "linux"
+        ? { title: "Ghi ra USB", hint: "Ghi nguyên khối" }
+        : { title: "Ghi bộ cài", hint: "Chép lên USB" };
+  }
+}
 
 const DEFAULT_UNATTEND: UnattendConfig = {
   enabled: true,
@@ -37,11 +59,15 @@ const DEFAULT_UNATTEND: UnattendConfig = {
   arch: "amd64",
 };
 
+/** Ổ nhỏ hơn mức này không chứa nổi bộ cài Windows. */
+const WINDOWS_MIN_USB = 8 * 1024 ** 3;
+
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(
     () => (localStorage.getItem("gwu-theme") as "dark" | "light") ?? "dark",
   );
-  const [step, setStep] = useState<StepId>(0);
+  const [step, setStep] = useState<StepKey>("os");
+  const [family, setFamily] = useState<OsFamily | null>(null);
   const [admin, setAdmin] = useState<boolean | null>(null);
 
   const [disks, setDisks] = useState<UsbDisk[]>([]);
@@ -50,10 +76,12 @@ export default function App() {
 
   const [hw, setHw] = useState<HardwareReport | null>(null);
   const [rec, setRec] = useState<Recommendation | null>(null);
+  const [distros, setDistros] = useState<DistroRecommendation | null>(null);
   const [scanning, setScanning] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
 
   const [chosenRelease, setChosenRelease] = useState<string | null>(null);
+  const [chosenDistro, setChosenDistro] = useState<string | null>(null);
   const [iso, setIso] = useState<IsoInfo | null>(null);
 
   const [scheme, setScheme] = useState<PartitionScheme>("gpt_fat32");
@@ -78,6 +106,19 @@ export default function App() {
     localStorage.setItem("gwu-theme", theme);
   }, [theme]);
 
+  // Đổi họ hệ điều hành thì file ISO đang chọn gần như chắc chắn không dùng
+  // được nữa, và một ổ đã format theo chuẩn Windows cũng vô nghĩa với luồng
+  // Linux. Giữ lại là mời người dùng ghi nhầm.
+  const chooseFamily = useCallback((f: OsFamily) => {
+    setFamily((prev) => {
+      if (prev !== null && prev !== f) {
+        setIso(null);
+        setFormatResult(null);
+      }
+      return f;
+    });
+  }, []);
+
   const refreshDisks = useCallback(async () => {
     setDisksLoading(true);
     try {
@@ -89,16 +130,21 @@ export default function App() {
     }
   }, []);
 
+  // Một lần quét máy nuôi cả hai engine gợi ý — chúng đọc cùng một
+  // HardwareReport, chỉ đo bằng những thước đo khác nhau.
   const scan = useCallback(async () => {
     setScanning(true);
     try {
-      const [report, recommendation] = await Promise.all([
+      const [report, recommendation, distroRec] = await Promise.all([
         api.scanHardware(),
         api.getRecommendation(),
+        api.recommendDistros(),
       ]);
       setHw(report);
       setRec(recommendation);
+      setDistros(distroRec);
       setChosenRelease((prev) => prev ?? recommendation.best);
+      setChosenDistro((prev) => prev ?? distroRec.best);
     } catch (e) {
       setFatal(errorText(e));
     } finally {
@@ -155,35 +201,110 @@ export default function App() {
     () => rec?.candidates.find((c) => c.release.id === (chosenRelease ?? rec.best))?.release ?? null,
     [rec, chosenRelease],
   );
+  const distro = useMemo(
+    () => distros?.candidates.find((c) => c.release.id === (chosenDistro ?? distros.best))?.release ?? null,
+    [distros, chosenDistro],
+  );
 
-  const doneMap: Record<StepId, boolean> = {
-    0: disk !== null,
-    1: hw !== null,
-    2: release !== null,
-    3: iso !== null,
-    4: formatResult !== null,
-    5: false,
+  /** Bản đã chọn của họ hệ điều hành đang dùng — thứ các bước sau thật sự cần. */
+  const picked = family === "linux" ? distro : release;
+
+  // Ổ USB cần bao nhiêu dung lượng phụ thuộc vào thứ sắp ghi lên nó: bộ cài
+  // Windows cần 8 GB, còn Lubuntu nằm gọn trong 3 GB. Ghi cứng một ngưỡng chung
+  // sẽ làm mờ đi những chiếc USB hoàn toàn dùng được.
+  const minUsbBytes =
+    family === "linux" ? Math.max(distro?.iso_size ?? 0, 2 * 1024 ** 3) : WINDOWS_MIN_USB;
+
+  const flow = family === "linux" ? LINUX_FLOW : WINDOWS_FLOW;
+
+  const done: Record<StepKey, boolean> = {
+    os: family !== null,
+    usb: disk !== null,
+    hardware: hw !== null,
+    release: picked !== null,
+    source: iso !== null,
+    format: formatResult !== null,
+    write: false,
   };
-  const subMap: Record<StepId, string> = {
-    0: disk ? `${disk.model} · ${bytes(disk.size, 0)}` : "Chưa chọn",
-    1: rec
+
+  const sub: Record<StepKey, string> = {
+    os: family === null ? "Chưa chọn" : family === "linux" ? "Linux" : "Windows",
+    usb: disk ? `${disk.model} · ${bytes(disk.size, 0)}` : "Chưa chọn",
+    hardware: rec
       ? `${rec.check_summary.passed}/${rec.check_summary.total} mục đạt`
       : scanning ? "Đang quét…" : "Chưa quét",
-    2: release ? release.name : "Chưa chọn",
-    3: iso ? iso.path.split(/[\\/]/).pop() ?? "" : "Chưa chọn",
-    4: formatResult ? `Xong · ổ ${formatResult.drive_letter}:` : "Chưa format",
-    5: admin ? "Sẵn sàng" : "Cần quyền quản trị",
+    release: picked ? picked.name : "Chưa chọn",
+    source: iso ? iso.path.split(/[\\/]/).pop() ?? "" : "Chưa chọn",
+    format: formatResult ? `Xong · ổ ${formatResult.drive_letter}:` : "Chưa format",
+    write: admin ? "Sẵn sàng" : "Cần quyền quản trị",
   };
 
   // Không cho nhảy tới bước sau khi bước trước chưa xong — chặn ngay ở giao diện
   // thay vì để backend từ chối sau khi người dùng đã thao tác một hồi.
-  const unlocked = (s: StepId) =>
-    s <= 2
-    || (s === 3 && release !== null)
-    || (s === 4 && iso !== null && disk !== null)
-    || (s === 5 && formatResult !== null);
+  const unlocked = (k: StepKey): boolean => {
+    if (k === "os") return true;
+    if (family === null) return false;
+    switch (k) {
+      case "usb":
+      case "hardware":
+      case "release":
+        return true;
+      case "source":
+        return picked !== null;
+      case "format":
+        return iso !== null && disk !== null;
+      case "write":
+        // Luồng Windows phải format xong mới ghi được; luồng Linux ghi nguyên
+        // khối nên chỉ cần có ổ và có file ảnh.
+        return family === "linux"
+          ? iso !== null && disk !== null
+          : formatResult !== null;
+    }
+  };
 
-  const canNext = step < 5 && unlocked((step + 1) as StepId);
+  /** Bước hiện tại có thể đã biến mất khỏi luồng sau khi người dùng đổi họ HĐH. */
+  const current = flow.includes(step) ? step : "os";
+  const at = flow.indexOf(current);
+  const next = flow[at + 1];
+  const prev = flow[at - 1];
+
+  // Cách lấy bộ cài là chỗ duy nhất hai họ khác nhau ở bước Nguồn, nên chỉ cần
+  // gói đúng khác biệt đó lại rồi đưa cho một component dùng chung.
+  const plan: SourcePlan | null = useMemo(() => {
+    if (family === "linux") {
+      if (!distro) return null;
+      return {
+        name: distro.name,
+        officialPage: async () => distro.download_page,
+        resolve: distro.checksum_url
+          ? async () => {
+              const r = await api.resolveDistroIso(distro.id);
+              return { url: r.url, filename: r.filename, sha256: r.sha256 };
+            }
+          : null,
+        manualNote: distro.checksum_url
+          ? null
+          : `${distro.name} không công bố link tải cố định — trang chính thức phát link theo từng phiên. Hãy tải thủ công rồi chọn file ở đây.`,
+      };
+    }
+    if (!release) return null;
+    return {
+      name: release.name,
+      officialPage: () => api.officialDownloadPage(release.id),
+      resolve:
+        release.source === "volume_license"
+          ? null
+          : async () => {
+              const links = await api.fetchDownloadLinks(release.id, "Vietnamese");
+              if (links.length === 0) throw new Error("Microsoft không trả về link tải nào.");
+              return { url: links[0].url, filename: `${release.id}.iso`, sha256: null };
+            },
+      manualNote:
+        release.source === "volume_license"
+          ? `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`
+          : null,
+    };
+  }, [family, distro, release]);
 
   return (
     <div className="app">
@@ -196,22 +317,25 @@ export default function App() {
       <div className="body">
         <nav className="rail">
           <div className="rail__label">Các bước</div>
-          {STEPS.map((s, i) => (
-            <button
-              key={i}
-              className="step"
-              aria-current={step === i}
-              data-done={doneMap[i as StepId]}
-              disabled={!unlocked(i as StepId)}
-              onClick={() => setStep(i as StepId)}
-            >
-              <span className="step__num">{doneMap[i as StepId] && step !== i ? "✓" : i + 1}</span>
-              <span className="step__text">
-                <span className="step__title">{s.title}</span>
-                <span className="step__sub">{subMap[i as StepId] || s.hint}</span>
-              </span>
-            </button>
-          ))}
+          {flow.map((k, i) => {
+            const m = meta(k, family);
+            return (
+              <button
+                key={k}
+                className="step"
+                aria-current={current === k}
+                data-done={done[k]}
+                disabled={!unlocked(k)}
+                onClick={() => setStep(k)}
+              >
+                <span className="step__num">{done[k] && current !== k ? "✓" : i + 1}</span>
+                <span className="step__text">
+                  <span className="step__title">{m.title}</span>
+                  <span className="step__sub">{sub[k] || m.hint}</span>
+                </span>
+              </button>
+            );
+          })}
 
           <div className="rail__foot">
             <button className="btn btn--sm btn--ghost" onClick={scan} disabled={scanning}>
@@ -227,42 +351,58 @@ export default function App() {
             </Note>
           )}
 
-          {step === 0 && (
+          {current === "os" && <StepOs family={family} onChoose={chooseFamily} />}
+
+          {current === "usb" && (
             <StepUsb disks={disks} selected={selectedDisk} onSelect={setSelectedDisk}
-                     onRefresh={refreshDisks} loading={disksLoading} />
+                     onRefresh={refreshDisks} loading={disksLoading} minBytes={minUsbBytes} />
           )}
-          {step === 1 && (
+
+          {current === "hardware" && (
             <StepHardware hw={hw} checks={rec?.checks ?? []} summary={rec?.check_summary ?? null}
                           loading={scanning} onElevate={elevate} onRescan={scan} />
           )}
-          {step === 2 && (
+
+          {current === "release" && family === "linux" && (
+            <StepDistro rec={distros} loading={scanning} chosen={chosenDistro}
+                        onChoose={setChosenDistro} onSeeHardware={() => setStep("hardware")} />
+          )}
+          {current === "release" && family !== "linux" && (
             <StepRecommend rec={rec} loading={scanning} chosen={chosenRelease}
                            onChoose={setChosenRelease}
                            onRefreshCatalog={refreshCatalog} refreshing={refreshingCatalog}
-                           onSeeHardware={() => setStep(1)} />
+                           onSeeHardware={() => setStep("hardware")} />
           )}
-          {step === 3 && <StepSource release={release} iso={iso} onIso={setIso} />}
-          {step === 4 && (
+
+          {current === "source" && (
+            <StepSource family={family ?? "windows"} plan={plan} iso={iso} onIso={setIso} />
+          )}
+
+          {current === "format" && (
             <StepFormat disk={disk} iso={iso} admin={admin === true}
                         scheme={scheme} onScheme={setScheme}
                         label={label} onLabel={setLabel}
                         result={formatResult} onResult={setFormatResult}
                         onAdminRelaunch={elevate} />
           )}
-          {step === 5 && (
+
+          {current === "write" && family === "linux" && (
+            <StepWriteRaw disk={disk} iso={iso} release={distro}
+                          admin={admin === true} onAdminRelaunch={elevate} />
+          )}
+          {current === "write" && family !== "linux" && (
             <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
                        format={formatResult} unattend={unattend} onUnattend={setUnattend} />
           )}
 
           <div className="actions">
-            <button className="btn" disabled={step === 0}
-                    onClick={() => setStep((s) => Math.max(0, s - 1) as StepId)}>
+            <button className="btn" disabled={!prev} onClick={() => prev && setStep(prev)}>
               ← Quay lại
             </button>
             <div className="spacer" />
-            {step < 5 && (
-              <button className="btn btn--primary" disabled={!canNext}
-                      onClick={() => setStep((s) => Math.min(5, s + 1) as StepId)}>
+            {next && (
+              <button className="btn btn--primary" disabled={!unlocked(next)}
+                      onClick={() => setStep(next)}>
                 Tiếp tục →
               </button>
             )}

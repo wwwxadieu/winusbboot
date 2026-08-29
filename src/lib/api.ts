@@ -3,9 +3,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  CatalogState, DownloadOption, DownloadProgress, FormatRequest, FormatResult,
-  HardwareReport, IsoInfo, Recommendation, UnattendConfig, UsbDisk, WriteProgress,
-  WriteRequest,
+  CatalogState, DistroRecommendation, DownloadOption, DownloadProgress, FormatRequest,
+  FormatResult, HardwareReport, IsoInfo, RawWriteRequest, Recommendation, ResolvedIso,
+  UnattendConfig, UsbDisk, WriteProgress, WriteRequest,
 } from "../types";
 
 export const api = {
@@ -27,6 +27,10 @@ export const api = {
   hashIso: (path: string) => invoke<string>("hash_iso", { path }),
   formatUsb: (request: FormatRequest) => invoke<FormatResult>("format_usb", { request }),
   writeIso: (request: WriteRequest) => invoke<void>("write_iso", { request }),
+  recommendDistros: () => invoke<DistroRecommendation>("recommend_distros"),
+  resolveDistroIso: (distroId: string) =>
+    invoke<ResolvedIso>("resolve_distro_iso", { distroId }),
+  writeImageRaw: (request: RawWriteRequest) => invoke<void>("write_image_raw", { request }),
   previewUnattend: (config: UnattendConfig) => invoke<string | null>("preview_unattend", { config }),
 };
 

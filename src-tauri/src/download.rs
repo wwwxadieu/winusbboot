@@ -269,3 +269,158 @@ where
     on_progress(100.0);
     Ok(hex::encode(hasher.finalize()))
 }
+
+// ---------------------------------------------------------------------------
+// Giải link tải của distro qua file mã băm
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedIso {
+    pub url: String,
+    pub filename: String,
+    /// Mã băm chính thức do chính dự án công bố, để đối chiếu sau khi tải xong.
+    pub sha256: String,
+}
+
+/// Tách một dòng trong file mã băm thành `(mã băm, tên file)`.
+///
+/// Hai định dạng cùng tồn tại trong thực tế và phải nhận được cả hai:
+/// GNU coreutils viết `<mã băm>  <tên file>` (dấu `*` trước tên file nghĩa là
+/// chế độ nhị phân), còn BSD viết `SHA256 (<tên file>) = <mã băm>`.
+fn parse_checksum_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+
+    // Dạng BSD.
+    if let Some(rest) = line.strip_prefix("SHA256 (") {
+        let (name, hash) = rest.split_once(") = ")?;
+        return Some((hash.trim().to_string(), name.trim().to_string()));
+    }
+
+    // Dạng GNU: mã băm, khoảng trắng, rồi tên file.
+    let (hash, name) = line.split_once(char::is_whitespace)?;
+    let name = name.trim_start().trim_start_matches('*').trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((hash.trim().to_string(), name.to_string()))
+}
+
+fn is_sha256(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Chọn đúng dòng ISO trong nội dung file mã băm.
+///
+/// Tách riêng khỏi phần mạng để kiểm thử được: đây mới là chỗ dễ chọn nhầm.
+/// Một file mã băm thường liệt kê nhiều thứ cùng lúc — bản desktop, bản live,
+/// bản netinst, kèm cả `.zsync` và `.torrent` — nên phải lọc đúng file `.iso`
+/// rồi mới khớp chuỗi nhận dạng.
+pub fn pick_iso(body: &str, want: &str) -> Option<(String, String)> {
+    let mut matches: Vec<(String, String)> = body
+        .lines()
+        .filter_map(parse_checksum_line)
+        .filter(|(hash, name)| {
+            is_sha256(hash) && name.to_lowercase().ends_with(".iso") && name.contains(want)
+        })
+        .collect();
+
+    // Nhiều dòng cùng khớp (ví dụ bản có và không có gói ngôn ngữ) thì lấy tên
+    // ngắn nhất — đó gần như luôn là bản tiêu chuẩn.
+    matches.sort_by_key(|(_, name)| (name.len(), name.clone()));
+    matches.into_iter().next()
+}
+
+/// Đọc file mã băm của distro để biết tên file ISO hiện hành và mã băm của nó.
+///
+/// Không ghi cứng link ISO vào danh mục vì tên file đổi theo từng bản vá nhỏ.
+/// Thư mục chứa thì cố định, nên đọc file mã băm trong đó là cách duy nhất vừa
+/// luôn ra đúng file mới nhất, vừa có sẵn mã băm để đối chiếu.
+pub async fn resolve_distro_iso(checksum_url: &str, want: &str) -> Result<ResolvedIso> {
+    let (dir, _) = checksum_url.rsplit_once('/').ok_or_else(|| {
+        AppError::new("bad_checksum_url", "Địa chỉ file mã băm không hợp lệ.")
+    })?;
+
+    let body = client()?
+        .get(checksum_url)
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(|e| {
+            AppError::new(
+                "checksum_unreachable",
+                format!("Không tải được danh sách mã băm của bản này: {e}"),
+            )
+        })?
+        .text()
+        .await?;
+
+    let (sha256, filename) = pick_iso(&body, want).ok_or_else(|| {
+        AppError::new(
+            "iso_not_listed",
+            "Không tìm thấy file ISO nào trong danh sách mã băm chính thức. \
+             Nhiều khả năng dự án đã đổi cách đặt tên file — hãy tải thủ công từ trang chính thức.",
+        )
+    })?;
+
+    Ok(ResolvedIso {
+        url: format!("{dir}/{filename}"),
+        filename,
+        sha256,
+    })
+}
+
+#[cfg(test)]
+mod distro_tests {
+    use super::*;
+
+    #[test]
+    fn both_checksum_formats_are_understood() {
+        assert_eq!(
+            parse_checksum_line(
+                "e240e4b8c3b1a0f00d5c1e1b6b0a4f0e2d3c4b5a6978877665544332211aabbc *ubuntu-24.04.3-desktop-amd64.iso"
+            ),
+            Some((
+                "e240e4b8c3b1a0f00d5c1e1b6b0a4f0e2d3c4b5a6978877665544332211aabbc".into(),
+                "ubuntu-24.04.3-desktop-amd64.iso".into()
+            ))
+        );
+        assert_eq!(
+            parse_checksum_line(
+                "SHA256 (Fedora-Workstation-Live-x86_64-43-1.1.iso) = 1111111111111111111111111111111111111111111111111111111111111111"
+            ),
+            Some((
+                "1111111111111111111111111111111111111111111111111111111111111111".into(),
+                "Fedora-Workstation-Live-x86_64-43-1.1.iso".into()
+            ))
+        );
+    }
+
+    const UBUNTU: &str = "\
+e240e4b8c3b1a0f00d5c1e1b6b0a4f0e2d3c4b5a6978877665544332211aabbc *ubuntu-24.04.3-desktop-amd64.iso
+1234567890123456789012345678901234567890123456789012345678901234 *ubuntu-24.04.3-desktop-amd64.iso.zsync
+abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd *ubuntu-24.04.3-live-server-amd64.iso
+";
+
+    #[test]
+    fn the_desktop_iso_is_picked_not_the_server_or_the_zsync() {
+        let (hash, name) = pick_iso(UBUNTU, "desktop-amd64.iso").unwrap();
+        assert_eq!(name, "ubuntu-24.04.3-desktop-amd64.iso");
+        assert!(is_sha256(&hash));
+    }
+
+    /// Đọc hụt còn hơn tải nhầm một file rồi ghi đè cả ổ USB bằng nó.
+    #[test]
+    fn nothing_is_returned_when_no_line_matches() {
+        assert_eq!(pick_iso(UBUNTU, "arm64.iso"), None);
+        assert_eq!(pick_iso("", "desktop-amd64.iso"), None);
+        assert_eq!(pick_iso("<html>404 Not Found</html>", "desktop-amd64.iso"), None);
+    }
+
+    /// Mã băm cụt hoặc không phải hex là dấu hiệu file đã đổi định dạng — bỏ qua
+    /// thay vì trả về một giá trị không dùng để đối chiếu được.
+    #[test]
+    fn malformed_hashes_are_rejected() {
+        let body = "deadbeef *ubuntu-24.04.3-desktop-amd64.iso\n";
+        assert_eq!(pick_iso(body, "desktop-amd64.iso"), None);
+    }
+}

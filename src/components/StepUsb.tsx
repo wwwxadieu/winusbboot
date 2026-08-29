@@ -2,10 +2,12 @@ import type { UsbDisk } from "../types";
 import { bytes } from "../lib/format";
 import { Empty, Note, Panel, UsbIcon } from "./ui";
 
-function reasonUnusable(d: UsbDisk): string | null {
+/** `minBytes` do bên gọi quyết định: bộ cài Windows cần 8 GB, ISO Linux thì ít
+ *  hơn nhiều — ghi cứng một ngưỡng chung sẽ loại oan ổ hoàn toàn dùng được. */
+function reasonUnusable(d: UsbDisk, minBytes: number): string | null {
   if (d.is_system || d.is_boot) return "Ổ hệ thống — không thể dùng";
   if (d.is_readonly) return "Ổ đang ở chế độ chỉ đọc";
-  if (d.size < 8 * 1024 ** 3) return "Dưới 8 GB, không đủ chứa bộ cài";
+  if (d.size < minBytes) return `Dưới ${bytes(minBytes, 0)}, không đủ chứa bộ cài`;
   return null;
 }
 
@@ -15,12 +17,14 @@ export function StepUsb({
   onSelect,
   onRefresh,
   loading,
+  minBytes,
 }: {
   disks: UsbDisk[];
   selected: number | null;
   onSelect: (n: number) => void;
   onRefresh: () => void;
   loading: boolean;
+  minBytes: number;
 }) {
   return (
     <>
@@ -45,7 +49,7 @@ export function StepUsb({
         ) : (
           <div className="grid">
             {disks.map((d) => {
-              const blocked = reasonUnusable(d);
+              const blocked = reasonUnusable(d, minBytes);
               const letters = d.volumes.map((v) => v.letter).filter(Boolean).join(", ");
               return (
                 <button

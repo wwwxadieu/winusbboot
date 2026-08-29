@@ -4,6 +4,7 @@ mod catalog;
 mod catalog_sync;
 mod checks;
 mod cpu;
+mod distro;
 mod download;
 mod error;
 mod hardware;
@@ -66,6 +67,46 @@ fn catalog_state() -> catalog::CatalogState {
 #[tauri::command]
 fn memory_type_name(code: u32) -> String {
     hardware::memory_type_name(code).to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Hệ điều hành mã nguồn mở
+// ---------------------------------------------------------------------------
+
+/// Chấm điểm các bản Linux theo đúng báo cáo phần cứng đã quét cho Windows —
+/// một lần quét máy dùng chung cho cả hai engine.
+#[tauri::command]
+async fn recommend_distros() -> Result<distro::DistroRecommendation> {
+    let hw = hardware::scan().await?;
+    Ok(distro::analyze(&hw))
+}
+
+/// Tra link tải hiện hành của một bản Linux qua file mã băm chính thức.
+#[tauri::command]
+async fn resolve_distro_iso(distro_id: String) -> Result<download::ResolvedIso> {
+    let release = distro::builtin()
+        .into_iter()
+        .find(|r| r.id == distro_id)
+        .ok_or_else(|| error::AppError::new("no_distro", "Không có bản Linux nào mang mã này."))?;
+
+    let url = release.checksum_url.ok_or_else(|| {
+        error::AppError::new(
+            "manual_only",
+            format!("{} không có link tải ổn định — hãy tải từ trang chính thức rồi chọn file.", release.name),
+        )
+    })?;
+
+    download::resolve_distro_iso(&url, &release.iso_match).await
+}
+
+/// Ghi nguyên khối ảnh đĩa ra USB. Dùng cho ISO Linux, xem `writer::write_image_raw`.
+#[tauri::command]
+async fn write_image_raw(app: AppHandle, request: writer::RawWriteRequest) -> Result<()> {
+    let handle = app.clone();
+    writer::write_image_raw(request, move |p| {
+        let _ = handle.emit("write://progress", &p);
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +259,8 @@ pub fn run() {
             disk_token,
             scan_hardware,
             get_recommendation,
+            recommend_distros,
+            resolve_distro_iso,
             memory_type_name,
             refresh_catalog,
             catalog_state,
@@ -230,6 +273,7 @@ pub fn run() {
             hash_iso,
             format_usb,
             write_iso,
+            write_image_raw,
             preview_unattend,
         ])
         .run(tauri::generate_context!())
