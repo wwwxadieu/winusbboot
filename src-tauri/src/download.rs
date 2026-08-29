@@ -57,6 +57,69 @@ fn extract_between(hay: &str, open: &str, close: &str) -> Vec<String> {
     out
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sku {
+    pub id: String,
+    pub language: String,
+}
+
+/// Bóc danh sách SKU (mỗi ngôn ngữ một SKU) từ HTML Microsoft trả về.
+///
+/// Trước đây đoạn này chỉ lấy `"id"` **đầu tiên** trong cả trang và bỏ qua hoàn
+/// toàn ngôn ngữ được yêu cầu — nghĩa là xin tiếng Nhật thì nhận về SKU nào
+/// đứng đầu danh sách, rồi được dán nhãn "Nhật". Tải sai ngôn ngữ mà vẫn báo
+/// đúng còn tệ hơn là báo lỗi, nên giờ id và ngôn ngữ luôn đi thành cặp.
+pub fn parse_skus(html: &str) -> Vec<Sku> {
+    // Microsoft nhúng JSON vào thuộc tính value của <option>, nên dấu nháy bị
+    // escape thành &quot;. Chuẩn hoá lại rồi mới bóc.
+    let flat = html.replace("&quot;", "\"");
+
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(rel) = flat[from..].find("\"id\":\"") {
+        let start = from + rel + 6;
+        let Some(end) = flat[start..].find('"') else { break };
+        let id = flat[start..start + end].to_string();
+
+        // Ngôn ngữ nằm cùng object với id; giới hạn tầm nhìn để không vớ phải
+        // trường của SKU kế tiếp.
+        let window_end = flat[start..]
+            .find("\"id\":\"")
+            .map(|n| start + n)
+            .unwrap_or(flat.len());
+        let window = &flat[start..window_end];
+
+        let language = ["\"language\":\"", "\"localizedLanguage\":\""]
+            .iter()
+            .find_map(|key| {
+                let at = window.find(key)? + key.len();
+                let stop = window[at..].find('"')?;
+                Some(window[at..at + stop].to_string())
+            })
+            .unwrap_or_default();
+
+        if !id.is_empty() && !language.is_empty() {
+            out.push(Sku { id, language });
+        }
+        from = start + end;
+    }
+    out
+}
+
+/// Chọn SKU đúng ngôn ngữ. So không phân biệt hoa thường, và chấp nhận cả tên
+/// đầy đủ lẫn tên rút gọn ("English" khớp "English (United States)").
+pub fn pick_sku(skus: &[Sku], want: &str) -> Option<String> {
+    let want = want.trim();
+    skus.iter()
+        .find(|s| s.language.eq_ignore_ascii_case(want))
+        .or_else(|| {
+            skus.iter().find(|s| {
+                s.language.to_lowercase().starts_with(&want.to_lowercase())
+            })
+        })
+        .map(|s| s.id.clone())
+}
+
 /// Hỏi Microsoft danh sách link tải ISO cho ngôn ngữ đã chọn.
 ///
 /// Đây là chính luồng mà trang tải chính thức dùng: đăng ký một phiên, hỏi mã
@@ -103,20 +166,27 @@ pub async fn fetch_official_links(release_id: &str, language: &str) -> Result<Ve
         .text()
         .await?;
 
-    let sku_id = extract_between(&sku_html, "\"id\":\"", "\"")
-        .into_iter()
-        .next()
-        .or_else(|| {
-            extract_between(&sku_html, "<option value=\"{&quot;id&quot;:&quot;", "&quot;")
-                .into_iter()
-                .next()
-        })
-        .ok_or_else(|| {
-            AppError::new(
-                "ms_no_sku",
-                format!("Microsoft không trả về bản tải cho ngôn ngữ {language}. Hãy tải thủ công từ trang chính thức."),
-            )
-        })?;
+    let skus = parse_skus(&sku_html);
+    let sku_id = pick_sku(&skus, language).ok_or_else(|| {
+        // Nói rõ có những ngôn ngữ nào thay vì chỉ báo "không tìm thấy" —
+        // Microsoft đổi cách đặt tên là chuyện thường, và người dùng cần biết
+        // phải chọn lại cái gì.
+        let available: Vec<&str> = skus.iter().map(|s| s.language.as_str()).take(12).collect();
+        AppError::new(
+            "ms_no_sku",
+            if skus.is_empty() {
+                format!(
+                    "Microsoft không trả về danh sách ngôn ngữ nào. Hãy tải thủ công \
+                     bản {language} từ trang chính thức."
+                )
+            } else {
+                format!(
+                    "Microsoft không có bản {language}. Những ngôn ngữ đang có: {}.",
+                    available.join(", ")
+                )
+            },
+        )
+    })?;
 
     // 4. Đổi mã SKU lấy link tải thật.
     let links_html = http
@@ -367,6 +437,66 @@ pub async fn resolve_distro_iso(checksum_url: &str, want: &str) -> Result<Resolv
         filename,
         sha256,
     })
+}
+
+#[cfg(test)]
+mod sku_tests {
+    use super::*;
+
+    /// Dạng Microsoft thật sự trả về: JSON nhúng trong thuộc tính value của
+    /// <option>, dấu nháy bị escape thành &quot;.
+    const SKU_HTML: &str = r#"
+      <select id="product-languages">
+        <option value="">Chọn một</option>
+        <option value="{&quot;id&quot;:&quot;11111&quot;,&quot;language&quot;:&quot;Arabic&quot;,&quot;localizedLanguage&quot;:&quot;العربية&quot;}">Arabic</option>
+        <option value="{&quot;id&quot;:&quot;22222&quot;,&quot;language&quot;:&quot;English (United States)&quot;,&quot;localizedLanguage&quot;:&quot;English (United States)&quot;}">English</option>
+        <option value="{&quot;id&quot;:&quot;33333&quot;,&quot;language&quot;:&quot;Japanese&quot;,&quot;localizedLanguage&quot;:&quot;日本語&quot;}">Japanese</option>
+      </select>"#;
+
+    #[test]
+    fn every_sku_keeps_its_id_paired_with_its_language() {
+        let skus = parse_skus(SKU_HTML);
+        assert_eq!(skus.len(), 3);
+        assert_eq!(skus[0], Sku { id: "11111".into(), language: "Arabic".into() });
+        assert_eq!(skus[2], Sku { id: "33333".into(), language: "Japanese".into() });
+    }
+
+    /// Lỗi cũ: lấy `"id"` đầu tiên trong cả trang rồi bỏ qua ngôn ngữ, nên xin
+    /// tiếng Nhật lại nhận về SKU tiếng Ả Rập mà vẫn báo là tiếng Nhật.
+    #[test]
+    fn the_requested_language_decides_the_sku_not_the_page_order() {
+        let skus = parse_skus(SKU_HTML);
+        assert_eq!(pick_sku(&skus, "Japanese").as_deref(), Some("33333"));
+        assert_eq!(pick_sku(&skus, "English (United States)").as_deref(), Some("22222"));
+        assert_ne!(
+            pick_sku(&skus, "Japanese").as_deref(),
+            Some("11111"),
+            "không được rơi về SKU đứng đầu danh sách"
+        );
+    }
+
+    #[test]
+    fn matching_ignores_case_and_accepts_a_shortened_name() {
+        let skus = parse_skus(SKU_HTML);
+        assert_eq!(pick_sku(&skus, "japanese").as_deref(), Some("33333"));
+        assert_eq!(pick_sku(&skus, "English").as_deref(), Some("22222"));
+    }
+
+    /// Tiếng Việt không có trong danh sách của Microsoft. Trả về None để bên
+    /// gọi báo lỗi kèm danh sách ngôn ngữ đang có, thay vì tải nhầm bản khác.
+    #[test]
+    fn a_language_microsoft_does_not_publish_yields_nothing() {
+        let skus = parse_skus(SKU_HTML);
+        assert_eq!(pick_sku(&skus, "Vietnamese"), None);
+    }
+
+    #[test]
+    fn garbage_html_yields_no_skus_rather_than_nonsense() {
+        assert!(parse_skus("").is_empty());
+        assert!(parse_skus("<html>404 Not Found</html>").is_empty());
+        // Có id nhưng không có ngôn ngữ đi kèm thì không dùng được để chọn.
+        assert!(parse_skus(r#"{"id":"9999"}"#).is_empty());
+    }
 }
 
 #[cfg(test)]

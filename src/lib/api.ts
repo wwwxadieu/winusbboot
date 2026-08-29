@@ -5,7 +5,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BootCheckRequest, BootReport, CatalogState, DistroRecommendation, DownloadOption,
   DownloadProgress, FormatRequest, FormatResult, HardwareReport, IsoInfo, RawWriteRequest,
-  Recommendation, ResolvedIso, ReadbackResult, UnattendConfig, UsbDisk, WriteProgress,
+  Recommendation, ResolvedIso, ReadbackResult, SetupLanguage, UnattendConfig, UsbDisk,
+  WriteProgress,
   WriteRequest,
 } from "../types";
 
@@ -15,6 +16,7 @@ export const api = {
   scanHardware: () => invoke<HardwareReport>("scan_hardware"),
   getRecommendation: () => invoke<Recommendation>("get_recommendation"),
   memoryTypeName: (code: number) => invoke<string>("memory_type_name", { code }),
+  setupLanguages: () => invoke<SetupLanguage[]>("setup_languages"),
   refreshCatalog: () => invoke<CatalogState>("refresh_catalog"),
   catalogState: () => invoke<CatalogState>("catalog_state"),
   isAdmin: () => invoke<boolean>("is_admin"),

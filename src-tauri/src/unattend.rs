@@ -24,8 +24,17 @@ pub struct LocalAccount {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnattendConfig {
     pub enabled: bool,
-    /// Mã ngôn ngữ, vd `vi-VN` hoặc `en-US`.
-    pub language: String,
+    /// Ngôn ngữ **hiển thị** của Windows, vd `en-US`.
+    ///
+    /// Bị giới hạn bởi những gì nằm trong file ISO: đặt một ngôn ngữ không có
+    /// trong ảnh đĩa thì Setup bỏ qua hoặc dừng giữa pass. Vì Microsoft không
+    /// phát hành ISO tiếng Việt nên trường này không bao giờ là `vi-VN` —
+    /// xem `languages.rs`.
+    pub ui_language: String,
+    /// Locale cho **định dạng vùng**: ngày tháng, tiền tệ, số. Locale nào cũng
+    /// được, kể cả `vi-VN` trên một bản Windows tiếng Anh — và đó chính là thứ
+    /// người dùng Việt Nam cần.
+    pub locale: String,
     /// Mã bố cục bàn phím, vd `0409:00000409` (US).
     pub keyboard: String,
     /// Tên múi giờ theo Windows, vd `SE Asia Standard Time`.
@@ -45,7 +54,10 @@ impl Default for UnattendConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            language: "vi-VN".into(),
+            // Ngôn ngữ hiển thị phải là thứ tải được; định dạng vùng thì
+            // mặc định theo người dùng Việt Nam.
+            ui_language: "en-US".into(),
+            locale: "vi-VN".into(),
             keyboard: "0409:00000409".into(),
             timezone: "SE Asia Standard Time".into(),
             computer_name: String::new(),
@@ -99,7 +111,8 @@ pub fn generate(cfg: &UnattendConfig) -> Option<String> {
     }
 
     let arch = if cfg.arch.eq_ignore_ascii_case("arm64") { "arm64" } else { "amd64" };
-    let lang = esc(&cfg.language);
+    let ui = esc(&cfg.ui_language);
+    let loc = esc(&cfg.locale);
     let kbd = esc(&cfg.keyboard);
 
     let mut xml = String::from(
@@ -110,11 +123,11 @@ pub fn generate(cfg: &UnattendConfig) -> Option<String> {
     xml.push_str("  <settings pass=\"windowsPE\">\r\n");
     xml.push_str(&format!(
         "    <component {}>\r\n\
-         \x20     <SetupUILanguage><UILanguage>{lang}</UILanguage></SetupUILanguage>\r\n\
+         \x20     <SetupUILanguage><UILanguage>{ui}</UILanguage></SetupUILanguage>\r\n\
          \x20     <InputLocale>{kbd}</InputLocale>\r\n\
-         \x20     <SystemLocale>{lang}</SystemLocale>\r\n\
-         \x20     <UILanguage>{lang}</UILanguage>\r\n\
-         \x20     <UserLocale>{lang}</UserLocale>\r\n\
+         \x20     <SystemLocale>{loc}</SystemLocale>\r\n\
+         \x20     <UILanguage>{ui}</UILanguage>\r\n\
+         \x20     <UserLocale>{loc}</UserLocale>\r\n\
          \x20   </component>\r\n",
         attrs("Microsoft-Windows-International-Core-WinPE", arch)
     ));
@@ -169,9 +182,9 @@ pub fn generate(cfg: &UnattendConfig) -> Option<String> {
     xml.push_str(&format!(
         "    <component {}>\r\n\
          \x20     <InputLocale>{kbd}</InputLocale>\r\n\
-         \x20     <SystemLocale>{lang}</SystemLocale>\r\n\
-         \x20     <UILanguage>{lang}</UILanguage>\r\n\
-         \x20     <UserLocale>{lang}</UserLocale>\r\n\
+         \x20     <SystemLocale>{loc}</SystemLocale>\r\n\
+         \x20     <UILanguage>{ui}</UILanguage>\r\n\
+         \x20     <UserLocale>{loc}</UserLocale>\r\n\
          \x20   </component>\r\n",
         attrs("Microsoft-Windows-International-Core", arch)
     ));
@@ -378,6 +391,44 @@ mod tests {
             generate(&c).unwrap().contains("processorArchitecture=\"amd64\""),
             "mọi giá trị không phải arm64 đều quy về amd64"
         );
+    }
+
+    /// Ngôn ngữ hiển thị và định dạng vùng là hai thứ khác nhau, và gộp chúng
+    /// lại chính là lỗi khiến ứng dụng từng sinh ra `<UILanguage>vi-VN</...>`
+    /// trên một bản ISO không hề có tiếng Việt.
+    #[test]
+    fn display_language_and_regional_format_are_kept_apart() {
+        let cfg = UnattendConfig {
+            enabled: true,
+            ui_language: "en-US".into(),
+            locale: "vi-VN".into(),
+            ..Default::default()
+        };
+        let xml = generate(&cfg).expect("phải sinh ra file");
+
+        assert!(xml.contains("<UILanguage>en-US</UILanguage>"),
+            "ngôn ngữ hiển thị phải theo ISO");
+        assert!(xml.contains("<UserLocale>vi-VN</UserLocale>"),
+            "định dạng vùng vẫn phải là Việt Nam");
+        assert!(xml.contains("<SystemLocale>vi-VN</SystemLocale>"));
+        assert!(!xml.contains("<UILanguage>vi-VN</UILanguage>"),
+            "không được đòi một ngôn ngữ hiển thị không có trong ảnh đĩa");
+    }
+
+    /// Cả hai pass đều phải nhất quán — sai một chỗ thì Setup và OOBE hiện hai
+    /// ngôn ngữ khác nhau.
+    #[test]
+    fn both_passes_agree_on_the_display_language() {
+        let cfg = UnattendConfig {
+            enabled: true,
+            ui_language: "ja-JP".into(),
+            locale: "vi-VN".into(),
+            ..Default::default()
+        };
+        let xml = generate(&cfg).unwrap();
+        assert_eq!(xml.matches("<UILanguage>ja-JP</UILanguage>").count(), 3,
+            "SetupUILanguage + windowsPE + oobeSystem");
+        assert_eq!(xml.matches("<UserLocale>vi-VN</UserLocale>").count(), 2);
     }
 
     #[test]

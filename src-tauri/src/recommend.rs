@@ -91,7 +91,9 @@ pub fn analyze_at(hw: &HardwareReport, today: i64) -> Recommendation {
     Recommendation {
         architecture: architecture(hw),
         edition_hint: edition_hint(hw),
-        language_hint: "Tiếng Việt (vi-vn)".into(),
+        // Microsoft không phát hành ISO tiếng Việt, nên gợi ý phải là một
+        // ngôn ngữ thật sự tải được — xem languages.rs.
+        language_hint: crate::languages::DEFAULT.into(),
         cpu: cpu_verdict,
         checks,
         check_summary,

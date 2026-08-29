@@ -347,6 +347,14 @@ body::before {
 .reasons li[data-t="con"]::before { content: "!"; color: var(--warn); }
 .reasons li[data-t="blk"]::before { content: "\2715"; color: var(--danger); }
 
+/* Ô nhập/chọn dùng chung. Trước đây mỗi chỗ tự viết style inline, nên thêm
+   một ô mới là phải chép lại cả khối. */
+.field {
+  font: inherit; font-size: 13px; padding: 7px 11px; border-radius: 9px;
+  border: 1px solid var(--border-hi); background: var(--glass-lo);
+  color: var(--text); width: 100%; user-select: text;
+}
+
 /* ------------------------------------------------ Đường khởi động */
 
 .bootway {

@@ -8,6 +8,7 @@ mod distro;
 mod download;
 mod error;
 mod hardware;
+mod languages;
 mod ps;
 mod recommend;
 mod unattend;
@@ -63,6 +64,13 @@ async fn refresh_catalog() -> Result<catalog::CatalogState> {
 #[tauri::command]
 fn catalog_state() -> catalog::CatalogState {
     catalog::snapshot()
+}
+
+/// Bảng ngôn ngữ bộ cài. Tách thành lệnh riêng để giao diện không phải giữ một
+/// bản sao thứ hai của danh sách rồi lệch dần khỏi bản backend dùng để khớp SKU.
+#[tauri::command]
+fn setup_languages() -> Vec<languages::SetupLanguage> {
+    languages::all()
 }
 
 #[tauri::command]
@@ -286,6 +294,7 @@ pub fn run() {
             recommend_distros,
             resolve_distro_iso,
             memory_type_name,
+            setup_languages,
             refresh_catalog,
             catalog_state,
             is_admin,
