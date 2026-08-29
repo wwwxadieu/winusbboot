@@ -79,6 +79,14 @@ jobs:
           TAG="${{ inputs.tag }}"
           [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
 
+          # ${GITHUB_REF#refs/tags/} không cắt gì khi ref là một nhánh, nên TAG
+          # sẽ mang giá trị kiểu "refs/heads/main" và bước dưới lặng lẽ tạo một
+          # bản phát hành mang cái tên đó. Dừng hẳn còn hơn phát hành sai tên.
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::Tên tag không hợp lệ: '$TAG'. Cần dạng v1.2.3."; exit 1 ;;
+          esac
+
           cat > notes.md <<NOTES
           ## Cài đặt
 
@@ -105,7 +113,12 @@ jobs:
           PRE=""
           case "$TAG" in v0.*) PRE="--prerelease" ;; esac
 
-          gh release create "$TAG" --title "$TAG" --notes-file notes.md $PRE \
+          # --target ghim tag vào đúng commit vừa dựng. Không có nó thì gh tạo tag
+          # ở HEAD của nhánh mặc định, nên chạy workflow trên một nhánh khác sẽ
+          # dựng từ nhánh đó nhưng gắn tag lên main — bộ cài và tag lệch nhau mà
+          # không có gì báo.
+          gh release create "$TAG" --title "$TAG" --target "$GITHUB_SHA" \
+            --notes-file notes.md $PRE \
             || gh release edit "$TAG" --notes-file notes.md $PRE
 
           gh release upload "$TAG" \
