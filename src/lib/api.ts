@@ -28,6 +28,8 @@ export const api = {
     invoke<DownloadOption[]>("fetch_download_links", { releaseId, language }),
   downloadIso: (url: string, dest: string) => invoke<string>("download_iso", { url, dest }),
   hashIso: (path: string) => invoke<string>("hash_iso", { path }),
+  isoDownloadDir: () => invoke<string>("iso_download_dir"),
+  discardIso: (path: string) => invoke<boolean>("discard_iso", { path }),
   formatUsb: (request: FormatRequest) => invoke<FormatResult>("format_usb", { request }),
   writeIso: (request: WriteRequest) => invoke<void>("write_iso", { request }),
   recommendDistros: () => invoke<DistroRecommendation>("recommend_distros"),

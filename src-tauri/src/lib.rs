@@ -167,6 +167,20 @@ async fn download_iso(app: AppHandle, url: String, dest: String) -> Result<Strin
     Ok(dest)
 }
 
+/// Thư mục ứng dụng tự tải ISO về. Giao diện hiện đường dẫn này thay vì bắt
+/// người dùng chọn thư mục mỗi lần tải.
+#[tauri::command]
+fn iso_download_dir() -> String {
+    download::managed_dir().to_string_lossy().to_string()
+}
+
+/// Dọn file ISO sau khi ghi xong USB. Chỉ xoá được file nằm trong thư mục ứng
+/// dụng tự quản — file người dùng tự chọn thì bị từ chối.
+#[tauri::command]
+fn discard_iso(path: String) -> Result<bool> {
+    download::discard(std::path::Path::new(&path))
+}
+
 #[tauri::command]
 async fn hash_iso(app: AppHandle, path: String) -> Result<String> {
     let handle = app.clone();
@@ -304,6 +318,8 @@ pub fn run() {
             fetch_download_links,
             download_iso,
             hash_iso,
+            iso_download_dir,
+            discard_iso,
             format_usb,
             write_iso,
             write_image_raw,

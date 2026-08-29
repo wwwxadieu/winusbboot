@@ -100,6 +100,9 @@ pub struct IsoInfo {
     pub architecture: String,
     pub needs_split: bool,
     pub bootable_uefi: bool,
+    /// File này do ứng dụng tự tải về thư mục riêng của nó, nên dọn dẹp được.
+    /// File người dùng tự chọn thì `false` và ứng dụng không bao giờ xoá.
+    pub managed: bool,
 }
 
 /// Bước format chỉ có hai chặng; bước ghi Windows có sáu; ghi raw có ba.
@@ -194,6 +197,7 @@ pub async fn inspect_iso(path: &str) -> Result<IsoInfo> {
             architecture: "x64".into(),
             needs_split: true,
             bootable_uefi: true,
+            managed: crate::download::is_managed(std::path::Path::new(path)),
         });
     }
 
@@ -209,6 +213,7 @@ pub async fn inspect_iso(path: &str) -> Result<IsoInfo> {
         architecture: info.architecture,
         needs_split: info.install_image_size > 4 * 1024 * 1024 * 1024 - 1,
         bootable_uefi: info.bootable_uefi,
+        managed: crate::download::is_managed(std::path::Path::new(path)),
     })
 }
 

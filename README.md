@@ -140,6 +140,34 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
+### Tải tự động của Windows đã tắt
+
+Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link dựa vào: nó
+trả 404 với mọi `pageId`, và trang tải hiện tại cũng không còn tham chiếu tới nó. Kiểm
+chứng trên cả máy dựng lẫn máy người dùng thật, nên không phải chuyện chặn theo IP.
+
+Nút tải tự động vì thế bị tắt cho Windows, kèm giải thích tại chỗ và chỉ sang đường tải
+thủ công — thà nói thẳng còn hơn để người dùng bấm rồi chờ một lỗi. Phần mã lấy link vẫn
+giữ nguyên trong `download.rs` kèm test, bật lại được ngay khi có người dựng lại luồng mới.
+
+Luồng Linux không dùng endpoint này nên không bị ảnh hưởng.
+
+### Tải vào thư mục riêng, ghi xong thì dọn
+
+Trước đây bước tải bắt chọn thư mục thủ công rồi để lại một file 3–6 GB nằm đó vĩnh viễn.
+Giờ ứng dụng tự tải vào `%LOCALAPPDATA%\GetWinUSB\iso`, và bước ghi có tuỳ chọn **Xoá file
+ISO sau khi ghi xong**, mặc định bật.
+
+Hàng rào quan trọng nhất của tính năng này: **chỉ file nằm trong thư mục ứng dụng tự quản
+mới xoá được.** File người dùng tự chọn là của họ — xoá nhầm một file ISO 6 GB họ đã tải cả
+buổi là thiệt hại không sửa được. `IsoInfo.managed` mang thông tin đó, `download::discard`
+từ chối thẳng mọi đường dẫn nằm ngoài, và có test cho cả trường hợp thư mục trùng tiền tố
+(`GetWinUSB-cu` không được coi là `GetWinUSB`).
+
+Đánh đổi: đối chiếu từng byte ở bước Kiểm tra cần chính file ISO gốc, nên bật xoá tự động
+thì mất chức năng đó. Giao diện nói rõ điều này ở cả hai nơi thay vì để người dùng bấm vào
+một nút đã biến mất.
+
 ### Hai mốc thời gian khác nhau khi tải
 
 `.timeout()` của reqwest là hạn chót cho **toàn bộ** request, tính cả thời gian tải hết
@@ -370,7 +398,7 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 107 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+- 111 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
   `distro.rs`, `download.rs`, `languages.rs`, `unattend.rs`, `verify.rs`, `writer.rs` —
   chạy xanh
 - Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
