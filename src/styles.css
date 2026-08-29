@@ -244,8 +244,10 @@ body::before {
   width: 40px; height: 40px; flex: none; border-radius: 11px; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
 }
-.disk__name { font-weight: 600; letter-spacing: -0.008em; }
-.disk__meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+/* Cả hai đều là <span> nên phải ép về block, không thì tên ổ và dòng mô tả
+   dính liền nhau trên một dòng và margin-top bên dưới không có tác dụng. */
+.disk__name { display: block; font-weight: 600; letter-spacing: -0.008em; }
+.disk__meta { display: block; font-size: 12px; color: var(--text-dim); margin-top: 2px; }
 .disk__size { margin-left: auto; text-align: right; flex: none; }
 .disk__size b { font-size: 17px; font-weight: 660; letter-spacing: -0.02em; }
 .disk__size span { display: block; font-size: 11px; color: var(--text-faint); }
@@ -396,8 +398,8 @@ body::before {
   border: 2px solid var(--border-hi); transition: all var(--dur) var(--ease);
 }
 .opt[aria-pressed="true"] .opt__radio { border-color: var(--accent); border-width: 5px; }
-.opt__title { font-weight: 600; font-size: 13.5px; }
-.opt__desc { font-size: 12.2px; color: var(--text-dim); margin-top: 2px; }
+.opt__title { display: block; font-weight: 600; font-size: 13.5px; }
+.opt__desc { display: block; font-size: 12.2px; color: var(--text-dim); margin-top: 2px; }
 
 /* ------------------------------------------------------------- Trống/tải */
 
