@@ -293,6 +293,31 @@ npm run tauri dev      # chạy thử, hot reload
 npm run tauri build    # xuất bộ cài .exe vào src-tauri/target/release/bundle/nsis/
 ```
 
+### Dựng bản phát hành
+
+Đường chính thống là workflow `.github/workflows/release.yml`: nó chạy trên runner
+Windows thật, chạy test rồi mới đóng gói, và ghi kèm mã băm SHA-256 của bộ cài. Đẩy một
+tag `v*` là nó tự chạy, hoặc bấm tay qua "Run workflow".
+
+Có thể cross-compile từ Linux khi cần một bản thử nhanh:
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin
+sudo apt-get install nsis clang lld     # makensis + trình liên kết
+npm run tauri build -- --runner cargo-xwin --target x86_64-pc-windows-msvc
+```
+
+Đường này Tauri ghi rõ là **thử nghiệm** và có hai giới hạn thật:
+
+- **Không ký số được.** Trình đóng gói chỉ ký trên máy Windows, nên bộ cài ra từ Linux
+  luôn chưa ký — Windows SmartScreen sẽ chặn ở lần chạy đầu.
+- **Không chạy thử được.** Máy dựng không phải Windows nên không có cách nào biết bộ cài
+  có chạy đúng hay không cho tới khi mang sang máy thật.
+
+Dùng nó để kiểm tra "có biên dịch được không", còn bản giao cho người dùng thì lấy từ
+workflow.
+
 Chạy test cho phần logic (bộ nhận diện CPU và engine gợi ý):
 
 ```bash

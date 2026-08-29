@@ -411,7 +411,6 @@ const GPT_HEADER: usize = 0x200; // LBA 1
 struct MbrEntry {
     active: bool,
     kind: u8,
-    sectors: u32,
 }
 
 fn mbr_entries(head: &[u8]) -> Vec<MbrEntry> {
@@ -419,11 +418,7 @@ fn mbr_entries(head: &[u8]) -> Vec<MbrEntry> {
         .filter_map(|i| {
             let at = MBR_PART_TABLE + i * 16;
             let e = head.get(at..at + 16)?;
-            (e[4] != 0).then(|| MbrEntry {
-                active: e[0] == 0x80,
-                kind: e[4],
-                sectors: u32::from_le_bytes([e[12], e[13], e[14], e[15]]),
-            })
+            (e[4] != 0).then(|| MbrEntry { active: e[0] == 0x80, kind: e[4] })
         })
         .collect()
 }

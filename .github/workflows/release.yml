@@ -1,0 +1,84 @@
+# Dựng bộ cài Windows trên runner Windows thật.
+#
+# Đây là đường chính thống: Tauri chỉ hỗ trợ dựng bản Windows trên Windows. Có
+# thể cross-compile từ Linux bằng cargo-xwin, nhưng đó là đường không được hỗ
+# trợ chính thức và không dùng được chữ ký số — nên bản phát hành cho người dùng
+# luôn nên ra từ đây.
+name: Dựng bản phát hành
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tên tag để đính bộ cài vào (bỏ trống thì chỉ dựng, không phát hành)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Biên dịch Rust là phần lâu nhất; giữ đệm để lần chạy sau còn vài phút.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cài phụ thuộc npm
+        run: npm ci
+
+      # Chạy trước khi dựng: hỏng ở đây thì biết ngay là do mã nguồn, chứ không
+      # phải do bước đóng gói.
+      - name: Kiểm tra kiểu TypeScript
+        run: npx tsc --noEmit
+
+      - name: Chạy test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Dựng bộ cài
+        run: npm run tauri build
+
+      - name: Ghi lại mã băm của bộ cài
+        shell: pwsh
+        run: |
+          $dir = "src-tauri/target/release/bundle/nsis"
+          Get-ChildItem $dir -Filter *.exe | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Tee-Object -Append -FilePath "$dir/SHA256SUMS.txt"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: getwinusb-windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Đính vào bản phát hành
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" --title "$TAG" --generate-notes || true
+          gh release upload "$TAG" \
+            src-tauri/target/release/bundle/nsis/*.exe \
+            src-tauri/target/release/bundle/nsis/SHA256SUMS.txt \
+            --clobber
