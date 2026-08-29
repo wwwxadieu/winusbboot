@@ -41,11 +41,14 @@ jobs:
       - name: Cài phụ thuộc npm
         run: npm ci
 
-      # Chạy trước khi dựng: hỏng ở đây thì biết ngay là do mã nguồn, chứ không
-      # phải do bước đóng gói.
-      - name: Kiểm tra kiểu TypeScript
-        run: npx tsc --noEmit
+      # Phải dựng frontend TRƯỚC khi biên dịch Rust: tauri::generate_context!()
+      # đọc tauri.conf.json lúc biên dịch và panic nếu thư mục frontendDist
+      # (../dist) chưa tồn tại. Lệnh này cũng chạy luôn `tsc --noEmit`.
+      - name: Dựng frontend và kiểm tra kiểu
+        run: npm run build
 
+      # Chạy trước khi đóng gói: hỏng ở đây thì biết ngay là do mã nguồn, chứ
+      # không phải do bước đóng gói.
       - name: Chạy test Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
