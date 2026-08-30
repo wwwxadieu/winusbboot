@@ -818,8 +818,35 @@ Get-ChildItem -LiteralPath $dir -Filter 'install*.swm' -ErrorAction SilentlyCont
 # trình bày.
 # 3800 MB mỗi mảnh: dưới trần 4 GB của FAT32, và Windows Setup tự nhận diện
 # chuỗi install.swm / install2.swm / …
-$argLine = '/English /Split-Image /ImageFile:"{0}" /SWMFile:"{1}" /FileSize:3800' -f $wim, $out
-$p = Start-Process -FilePath 'dism.exe' -ArgumentList $argLine -NoNewWindow -PassThru
+#
+# Đường dẫn KHÔNG bọc trong dấu nháy: `-ArgumentList` nhận một chuỗi rồi để
+# Windows tách lại, và dấu nháy lồng trong đó hay bị nuốt hoặc nhân đôi — DISM
+# nhận về một đường dẫn hỏng rồi báo lỗi cú pháp. Hai đường dẫn này luôn nằm ở
+# gốc ổ đĩa nên không bao giờ có dấu cách để mà phải bọc.
+$argLine = '/English /Split-Image /ImageFile:{0} /SWMFile:{1} /FileSize:3800' -f $wim, $out
+
+# Hứng output của DISM ra file thay vì để nó chảy vào stdout chung: một là nó
+# lẫn vào dòng tiến trình GWU:SPLIT, hai là khi hỏng thì chính mấy dòng đó mới
+# nói được vì sao hỏng.
+# `$env:TEMP` gần như luôn có, nhưng nếu thiếu thì `Join-Path` trả về rỗng,
+# `Start-Process` ném lỗi, và vòng lặp bên dưới quay mãi vì `$p` là null.
+$tmp = $env:TEMP
+if (-not $tmp) { $tmp = [System.IO.Path]::GetTempPath() }
+$log = Join-Path $tmp ('gwu-dism-{0}.log' -f [guid]::NewGuid())
+$errLog = $log + '.err'
+$p = Start-Process -FilePath 'dism.exe' -ArgumentList $argLine -NoNewWindow -PassThru `
+       -RedirectStandardOutput $log -RedirectStandardError $errLog
+
+# Không khởi chạy được thì `$p` là null, và `-not $null.HasExited` cho ra TRUE —
+# nghĩa là vòng lặp dưới quay vô tận và bước ghi treo cứng không báo gì. Chặn ở
+# đây, vì một lời báo lỗi bao giờ cũng hơn một thanh tiến trình đứng im.
+if ($null -eq $p) { throw 'Không khởi chạy được dism.exe để tách install.wim.' }
+
+# Chạm vào Handle ngay lúc này để .NET giữ lại thông tin tiến trình. Không có
+# dòng này thì trên PowerShell 5.1, $p.ExitCode hay trả về rỗng sau khi tiến
+# trình kết thúc — và đó đúng là lý do người dùng từng nhận được một câu báo lỗi
+# cụt ngủn: "DISM tách file install.wim thất bại, mã lỗi " rồi hết.
+$null = $p.Handle
 
 while (-not $p.HasExited) {
   Start-Sleep -Milliseconds 700
@@ -831,7 +858,33 @@ while (-not $p.HasExited) {
 }
 $p.WaitForExit()
 
-if ($p.ExitCode -ne 0) { throw ('DISM tách file install.wim thất bại, mã lỗi ' + $p.ExitCode) }
+# `Start-Process -PassThru` có lúc trả về ExitCode rỗng — và một lời báo lỗi
+# kết thúc bằng "mã lỗi " rồi bỏ lửng thì không giúp được ai. Nên ngoài mã còn
+# xét cả kết quả thật trên ổ: không có mảnh .swm nào thì chắc chắn là hỏng.
+$code = $null
+try { $code = $p.ExitCode } catch { }
+$parts = @(Get-ChildItem -LiteralPath $dir -Filter 'install*.swm' -ErrorAction SilentlyContinue)
+$ok = ($parts.Count -gt 0) -and (($code -eq 0) -or ($null -eq $code))
+
+if (-not $ok) {
+  $why = @()
+  foreach ($f in @($log, $errLog)) {
+    if (Test-Path -LiteralPath $f) {
+      $why += (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue |
+               ForEach-Object { $_.Trim() } |
+               Where-Object { $_ -and $_ -notmatch '^[\[\]=\s\d\.%]+$' } |
+               Select-Object -Last 4)
+    }
+  }
+  Remove-Item -LiteralPath $log, $errLog -Force -ErrorAction SilentlyContinue
+  $codeText = if ($null -eq $code) { 'không đọc được' } else { [string]$code }
+  $detail = if ($why.Count -gt 0) { ' DISM nói: ' + ($why -join ' | ') } else { '' }
+  throw ('DISM tách install.wim thất bại (mã ' + $codeText + ').' + $detail +
+         ' Cách chắc ăn: mở "Kiểu phân vùng và tên ổ" ở bước này rồi chọn MBR + NTFS — ' +
+         'kiểu đó không giới hạn 4 GB nên không phải tách file.')
+}
+
+Remove-Item -LiteralPath $log, $errLog -Force -ErrorAction SilentlyContinue
 Write-Output ("GWU:SPLIT " + $total + " " + $total)
 "#;
 
@@ -914,6 +967,33 @@ mod tests {
     #[test]
     fn quotes_in_paths_cannot_break_out_of_the_script() {
         assert_eq!(escape("D:\\it's here\\win.iso"), "D:\\it''s here\\win.iso");
+    }
+
+    /// Ba điều kiện của bước tách file, đều học từ một lần hỏng thật.
+    ///
+    /// Không chạy được PowerShell ở đây nên test này chỉ khoá lại hình dạng
+    /// script; phần chạy thật đã kiểm bằng cách dựng một `dism` giả hỏng và một
+    /// `dism` giả chạy được, cho cả hai đi qua đúng script này.
+    #[test]
+    fn the_split_script_can_always_say_why_it_failed() {
+        // Tiến trình không khởi chạy được thì `$p` là null, và `-not
+        // $null.HasExited` cho ra TRUE — thiếu chặn này là bước ghi treo cứng.
+        assert!(
+            SCRIPT_SPLIT.contains("if ($null -eq $p)"),
+            "phải chặn trường hợp không khởi chạy được dism"
+        );
+        // Mã lỗi rỗng từng biến câu báo lỗi thành "…mã lỗi " rồi bỏ lửng.
+        assert!(SCRIPT_SPLIT.contains("$null = $p.Handle"), "phải giữ handle để đọc được ExitCode");
+        assert!(SCRIPT_SPLIT.contains("không đọc được"), "phải có chữ thay cho mã lỗi rỗng");
+        // Lời DISM nói mới là thứ chẩn đoán được; thiếu nó thì người dùng chỉ
+        // có một con số.
+        assert!(SCRIPT_SPLIT.contains("DISM nói: "), "phải kèm output của DISM");
+        assert!(SCRIPT_SPLIT.contains("MBR + NTFS"), "phải chỉ ra đường vòng dùng được ngay");
+        // Dấu nháy lồng trong -ArgumentList hay bị Windows tách lại sai.
+        assert!(
+            !SCRIPT_SPLIT.contains("/ImageFile:\"{0}\""),
+            "đường dẫn không được bọc trong dấu nháy"
+        );
     }
 }
 

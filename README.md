@@ -173,19 +173,41 @@ lại theo đúng hình dạng đó. Hình dạng này **đọc thẳng từ Jav
 đoán, nên khớp từng tham số với thứ trình duyệt thật gửi đi:
 
 ```
+# 1. Ghi nhận phiên
+GET vlscppe.microsoft.com/tags?org_id=y6jn8c31&session_id=<GUID>
+
+# 2. Nhận thử thách chống bot
+GET ov-df.microsoft.com/mdt.js?instanceId=<hằng số>&PageId=si&session_id=<GUID>
+  → …&w=8DF06B0162BC353";src+="&rticks="+1788105746587;
+
+# 3. Trả lời thử thách
+GET ov-df.microsoft.com/?session_id=<GUID>&CustomerId=<hằng số>&PageId=si
+      &w=<w>&mdt=<epoch ms>&rticks=<rticks>
+
+# 4. Danh sách ngôn ngữ
 GET /software-download-connector/api/getskuinformationbyproductedition
       ?profile=606624d44113&ProductEditionId=<mã>&SKU=undefined
       &friendlyFileName=undefined&Locale=en-US&sessionID=<GUID>
   → { "Skus": [ { "Id", "Language", "LocalizedLanguage" } ] }
 
+# 5. Link ký sẵn — bắt buộc kèm header Referer
 GET /software-download-connector/api/GetProductDownloadLinksBySku
       ?profile=606624d44113&ProductEditionId=undefined&SKU=<id>
       &friendlyFileName=undefined&Locale=en-US&sessionID=<GUID>
-  → { "ProductDownloadOptions": [ { "Uri", "DownloadType" } ] }
+  → { "ProductDownloadOptions": [ { "Uri", "DownloadType": 1 } ] }
 ```
 
-Ba chi tiết quyết định việc này chạy đúng hay chạy sai một cách âm thầm:
+Năm chi tiết quyết định việc này chạy đúng hay chạy sai một cách âm thầm:
 
+- **Ba bước chống bot, không phải một.** Bản đầu chỉ gọi `vlscppe` rồi đi thẳng tới API. Thiếu
+  hai bước `ov-df` thì mọi thứ vẫn *trông như* chạy — bước 4 trả về đủ 38 ngôn ngữ — chỉ bước 5
+  bị chặn bằng `ErrorSettings.SentinelReject`. Vì lỗi rơi đúng vào bước cuối nên rất dễ kết luận
+  nhầm là Microsoft cấm IP.
+- **`DownloadType` là số, không phải chuỗi.** Khai nhầm kiểu thì `serde` vứt cả phản hồi *thành
+  công* và ứng dụng báo "dữ liệu không đọc được" cho một lần tải lẽ ra đã xong. Đây là lỗi tự
+  che mắt mình: nó chỉ lộ ra sau khi lớp chống bot đã sửa xong, vì trước đó phản hồi luôn là lỗi
+  — mà lỗi thì lại đọc được.
+- **Bước 5 phải có header `Referer`.** Thiếu là bị từ chối dù phiên đã sạch.
 - **Mã product edition đọc từ trang, không ghi cứng.** Mã đổi theo từng bản phát hành, ghi cứng
   thì tới bản sau là hỏng mà không ai biết.
 - **Chọn SKU so bằng dấu bằng, không so tiền tố.** Microsoft có cả `English` lẫn
@@ -193,15 +215,17 @@ Ba chi tiết quyết định việc này chạy đúng hay chạy sai một cá
   là đúng*. Cũng vì API gọi bản Mỹ đúng một chữ `English` nên bảng ngôn ngữ trong `languages.rs`
   đổi theo; khâu chọn nhận thêm cả tên ở trường `LocalizedLanguage` để lần đổi tên sau không làm
   hỏng.
-- **Không có mã băm.** Microsoft không công bố mã băm ở đâu trong luồng tải của họ, nên
-  `ResolvedIso.sha256` là `None` với Windows và giao diện chỉ hiện mã băm *tính được* chứ không
-  nói là "khớp" hay "không khớp". Không có gì để so thì đừng vờ như có.
 
-**Giới hạn thật, và người dùng cần biết trước:** Microsoft chặn bước lấy link theo địa chỉ IP.
-Gọi từ một máy chủ trung tâm dữ liệu thì bước 1 vẫn trả về đủ 38 ngôn ngữ, còn bước 2 trả về
-`{"Errors":[{"Key":"ErrorSettings.SentinelReject"}]}`. Ứng dụng diễn giải đúng lỗi đó thành lời
-khuyên cụ thể — tắt VPN, hoặc tải bằng trình duyệt — thay vì ném một chuỗi tiếng Anh khó hiểu.
-Mạng gia đình bình thường thì không vướng.
+Không có mã băm: Microsoft không công bố mã băm ở đâu trong luồng tải của họ, nên
+`ResolvedIso.sha256` là `None` với Windows và giao diện chỉ hiện mã băm *tính được* chứ không
+nói là "khớp" hay "không khớp". Không có gì để so thì đừng vờ như có.
+
+**Giới hạn thật:** ngay cả khi làm đủ năm bước, Microsoft vẫn từ chối rải rác — chạy năm lần
+trên cùng một máy thì vài lần bị chặn, và bản tham chiếu Fido cũng vậy trên chính máy đó. Ứng
+dụng vì thế thử lại tối đa ba lần, mỗi lần một phiên mới. Địa chỉ IP của trung tâm dữ liệu bị
+siết nặng hơn hẳn sau vài chục lần gọi. Lỗi loại `Type 9` mới là chặn theo IP thật; loại `Type 8`
+là phiên chưa qua được lớp chống bot — ứng dụng phân biệt hai thứ đó, vì bảo người dùng đi tắt
+VPN trong khi thủ phạm là một bước mình quên làm thì họ sẽ đi sửa mạng nhà mãi mà không xong.
 
 ### Mở app là đã có quyền quản trị
 
@@ -549,6 +573,23 @@ FAT32 không chứa nổi file quá 4 GB, mà `install.wim` của Windows 11 th�
 nhận diện tự động, người dùng không phải làm gì thêm. Đây là đường đi được Microsoft hỗ trợ
 chính thức, không phải mẹo vặt.
 
+DISM có hỏng, và bước này phải nói được **vì sao** hỏng. Bản đầu nuốt mất cả ba thứ cần
+thiết:
+
+- Output của DISM chảy thẳng vào stdout chung rồi bị bỏ qua vì không mang tiền tố `GWU:`.
+  Nay nó được hứng ra file riêng, và khi hỏng thì mấy dòng có nội dung cuối cùng — thường là
+  `Error: 0x…` kèm một câu tiếng Anh — được ghép vào lời báo lỗi.
+- `Start-Process -PassThru` trên PowerShell 5.1 hay trả về `ExitCode` rỗng, nên câu báo lỗi
+  từng kết thúc bằng "mã lỗi " rồi bỏ lửng. Chạm vào `$p.Handle` ngay sau khi khởi chạy thì
+  .NET giữ lại thông tin tiến trình; ngoài ra còn xét cả kết quả thật trên ổ, vì không có
+  mảnh `.swm` nào thì chắc chắn là hỏng bất kể mã lỗi nói gì.
+- Khởi chạy `dism.exe` thất bại thì `$p` là `$null`, mà `-not $null.HasExited` cho ra `TRUE`
+  — vòng lặp theo dõi tiến trình quay vô tận và cả bước ghi treo cứng, không báo gì. Nay có
+  một dòng chặn ngay tại đó.
+
+Lời báo lỗi cũng chỉ luôn đường vòng dùng được ngay: đổi sang **MBR + NTFS** thì không có
+giới hạn 4 GB nên không phải tách file. Kiểu phân vùng nằm trong khối gập ngay tại bước Ghi.
+
 Ngoài ra `Format-Volume` của Windows từ chối tạo FAT32 lớn hơn 32 GB, nên với USB dung lượng
 lớn, phân vùng boot bị cắt ở đúng 32 GB và phần dư được tạo thành một phân vùng NTFS tên
 `DATA` — thay vì bỏ phí vài chục GB.
@@ -616,9 +657,12 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 151 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+- 155 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
   `distro.rs`, `download.rs`, `drivers.rs`, `languages.rs`, `unattend.rs`, `verify.rs`,
   `writer.rs` — chạy xanh
+- Luồng tải ISO Windows chạy thật với Microsoft, lấy về link ký sẵn (`cargo test live_probe --
+  --ignored`). Đây là thứ duy nhất bắt được lỗi kiểu "thiếu một bước chống bot"; test đọc phản
+  hồi cắt sẵn vẫn xanh trong khi tính năng hỏng hoàn toàn ngoài đời
 - Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
   hiện hành
 - Toàn bộ file Rust qua được kiểm tra cú pháp
