@@ -66,9 +66,10 @@ trường hợp thứ hai chỉ cần vào BIOS bật lên, không cần lách g
 TPM 2.0, ứng dụng đề xuất Windows 10 IoT Enterprise LTSC 2021: vẫn còn bản vá bảo mật
 tới 13/01/2032, an toàn hơn nhiều so với việc cài Windows 11 lách kiểm tra.
 
-**4. Nguồn bộ cài** — chọn file ISO có sẵn, tải tự động từ Microsoft (có nối tiếp khi đứt
-mạng), hoặc mở trang tải chính thức. Đọc luôn nội dung ISO: có những bản Windows nào,
-kiến trúc gì, install.wim nặng bao nhiêu. Có nút tính SHA-256 để đối chiếu.
+**4. Nguồn bộ cài** — chọn file ISO có sẵn hoặc mở trang tải chính thức; riêng luồng Linux
+có thêm đường tải tự động từ nguồn chính thức (nối tiếp được khi đứt mạng, tự đối chiếu mã
+băm). Đọc luôn nội dung ISO: có những bản Windows nào, kiến trúc gì, install.wim nặng bao
+nhiêu. Có nút tính SHA-256 để đối chiếu.
 
 **5. Format USB** — xoá và chia lại phân vùng, tách riêng thành một bước có xác nhận của
 chính nó. Đây là thao tác duy nhất trong ứng dụng làm mất dữ liệu, nên nó không được nấp
@@ -140,17 +141,19 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
-### Tải tự động của Windows đã tắt
+### Windows không còn đường tải tự động
 
 Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link dựa vào: nó
 trả 404 với mọi `pageId`, và trang tải hiện tại cũng không còn tham chiếu tới nó. Kiểm
 chứng trên cả máy dựng lẫn máy người dùng thật, nên không phải chuyện chặn theo IP.
 
-Nút tải tự động vì thế bị tắt cho Windows, kèm giải thích tại chỗ và chỉ sang đường tải
-thủ công — thà nói thẳng còn hơn để người dùng bấm rồi chờ một lỗi. Phần mã lấy link vẫn
-giữ nguyên trong `download.rs` kèm test, bật lại được ngay khi có người dựng lại luồng mới.
+Tính năng này vì thế đã bỏ hẳn, không phải chỉ tắt đi: phần bóc link (`fetch_official_links`,
+`parse_skus`, `pick_sku`) và lệnh `fetch_download_links` đều không còn, và bước Nguồn bộ cài
+của Windows chỉ dựng đúng hai lựa chọn còn dùng được — chọn file có sẵn, và mở trang tải
+chính thức. Một nút mờ đi vẫn là một lời hứa: người dùng sẽ đi tìm cách bật nó lên. Lịch sử
+git giữ lại phần mã cũ nếu sau này Microsoft dựng một luồng mới.
 
-Luồng Linux không dùng endpoint này nên không bị ảnh hưởng.
+Luồng Linux không dùng endpoint này nên không bị ảnh hưởng — đường tải tự động vẫn còn ở đó.
 
 ### Tải vào thư mục riêng, ghi xong thì dọn
 
@@ -249,6 +252,27 @@ File này chủ ý **không** chứa `DiskConfiguration`. Thêm vào thì Setup 
 ổ cứng đích mà không hỏi lại lần nào — quá nguy hiểm cho một công cụ mà người dùng có thể
 cắm nhầm máy. Có hẳn một test khoá điều này lại để lần mở rộng sau không vô tình thêm vào.
 
+### Khung giao diện co theo cửa sổ
+
+Ba thay đổi nhỏ giải quyết phần lớn chuyện bố cục ở các cỡ cửa sổ khác nhau:
+
+- **Cột nội dung có trần rộng 1280px và luôn nằm giữa.** Không có trần thì trên màn 2K mọi
+  thứ bị kéo dài hết bề ngang: dòng chữ dài quá tầm mắt, lưới thẻ tự tách thành sáu bảy cột
+  mỏng dính, và nút bấm bị đẩy ra tận mép màn hình. Trần này cố tình là một con số cố định
+  chứ không phải `clamp(…, vw, …)` — bất kỳ vế nào theo `vw` cũng làm cột hẹp hơn chỗ đang
+  có ở các cửa sổ cỡ vừa, tức là tự tạo ra đúng thứ khoảng trống nó sinh ra để tránh.
+- **Thanh "Quay lại / Tiếp tục" dính đáy vùng nội dung.** Trước đây hai nút nằm cuối vùng
+  cuộn, nên ở bước dài phải cuộn tới đáy mới thấy. Thanh này dùng lại đúng lớp `.shell` nên
+  nút của nó thẳng hàng với hai mép nội dung phía trên, không phải hai mép màn hình.
+- **Nội dung ngắn thì căn giữa theo chiều dọc** (`align-content: safe center`). Từ khoá
+  `safe` là phần thiết yếu: thiếu nó thì nội dung dài hơn khung sẽ bị cắt mất phần đầu và
+  không cuộn ngược lên được.
+
+Kèm theo là ba mốc co giãn: dưới 980px cột bước dựng đứng đổi thành dải ngang cuộn được ở
+trên; dưới 720px chiều cao thì cắt bớt khoảng đệm; từ 1900px trở lên nới cỡ chữ và khoảng
+đệm để cột nội dung 1280px không bị hụt giữa màn hình rộng. Cửa sổ tối thiểu hạ xuống
+840×600 để những mốc này thật sự với tới được.
+
 ---
 
 ## Cấu trúc
@@ -265,7 +289,7 @@ src-tauri/src/
   catalog_sync.rs  Đọc bảng vòng đời từ trang release-health của Microsoft
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
   recommend.rs  Engine chấm điểm và xếp hạng
-  download.rs   Lấy link chính thức + tải có tiến trình, có resume, tính SHA-256
+  download.rs   Giải link ISO Linux + tải có tiến trình, có resume, tính SHA-256
   writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
   verify.rs     Kiểm tra USB sau khi ghi: cấu trúc khởi động + đọc lại đối chiếu
   unattend.rs   Sinh autounattend.xml để bỏ qua màn hình cài đặt ban đầu
@@ -276,7 +300,7 @@ src/
   types.ts          Khớp 1-1 với struct Rust
   lib/api.ts        Bọc invoke + listen
   components/       Titlebar, các màn hình bước, các mảnh dùng chung
-  styles.css        Hệ thống thiết kế (biến CSS, sáng/tối)
+  styles.css        Hệ thống thiết kế (biến CSS, sáng/tối, khung co theo cửa sổ)
 ```
 
 ---
@@ -412,8 +436,9 @@ Chưa kiểm chứng được (môi trường dựng ứng dụng không có Win
   đầu trên máy Windows
 - Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối và đoạn đọc lại
   `\\.\PHYSICALDRIVE<n>`** — hãy thử trên một ổ USB không chứa dữ liệu quan trọng
-- Luồng lấy link tải tự động của Microsoft. Đây là phần dễ hỏng nhất vì Microsoft có thể đổi
-  bất cứ lúc nào, nên giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang
+- Đường tải tự động của các bản Linux trên máy người dùng thật. Máy dựng bị `releases.ubuntu.com`
+  trả 403 (Canonical chặn dải IP trung tâm dữ liệu), nên phần này chỉ kiểm chứng được tới mức
+  giải link và mã băm; giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang
   tải chính thức trong trình duyệt.
 
 **Trước khi thử tính năng ghi USB, hãy dùng một ổ USB không chứa dữ liệu quan trọng.**

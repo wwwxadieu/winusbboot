@@ -263,13 +263,6 @@ export interface DownloadProgress {
   eta_secs: number;
 }
 
-export interface DownloadOption {
-  label: string;
-  url: string;
-  language: string;
-  architecture: string;
-}
-
 export interface AppError { code: string; message: string }
 
 // ---------------------------------------------------------------------------

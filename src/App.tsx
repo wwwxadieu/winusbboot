@@ -333,14 +333,11 @@ export default function App() {
       };
     }
     if (!release) return null;
-    // Tải tự động cho Windows đã tắt: Microsoft gỡ endpoint
-    // /api/controls/contentinclude/html mà luồng này dựa vào — nó trả 404 với
-    // mọi pageId, và trang tải hiện tại cũng không còn tham chiếu tới nó. Để
-    // nút đó bật thì người dùng bấm vào chỉ nhận lỗi sau một hồi chờ, nên thà
-    // nói thẳng ngay từ đầu và chỉ sang đường tải thủ công.
-    //
-    // Phần mã lấy link vẫn giữ nguyên trong download.rs kèm test, để bật lại
-    // được ngay khi có người dựng lại luồng mới của Microsoft.
+    // Windows không có đường tải tự động. Luồng cũ dựa vào endpoint
+    // /api/controls/contentinclude/html của Microsoft, và endpoint đó đã bị gỡ
+    // — trả 404 với mọi pageId, kể cả pageId lấy từ chính trang tải hiện tại.
+    // Không có gì để bật lại, nên phần bóc link đã bỏ khỏi cả backend lẫn giao
+    // diện; ở đây chỉ còn đường dẫn trang tải để mở bằng trình duyệt.
     return {
       name: release.name,
       officialPage: () => api.officialDownloadPage(release.id),
@@ -348,7 +345,7 @@ export default function App() {
       manualNote:
         release.source === "volume_license"
           ? `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`
-          : `Microsoft đã gỡ luồng tải tự động mà ứng dụng dùng, nên nút tải tự động không còn hoạt động cho Windows. Bấm "Mở trang tải chính thức", chọn ${language}, tải file ISO về rồi quay lại đây chọn file.`,
+          : `Microsoft không cho tải ISO trực tiếp từ ứng dụng ngoài, nên bộ cài Windows phải tải bằng trình duyệt. Bấm "Mở trang tải chính thức", chọn ${language}, tải file ISO về rồi quay lại đây chọn file.`,
     };
   }, [family, distro, release, language]);
 
@@ -391,75 +388,89 @@ export default function App() {
         </nav>
 
         <main className="main">
-          {fatal && (
-            <Note type="danger" icon="✕" title="Không đọc được thông tin hệ thống">
-              {fatal}
-            </Note>
-          )}
+          <div className="main__scroll">
+            <div className="shell">
+              {fatal && (
+                <Note type="danger" icon="✕" title="Không đọc được thông tin hệ thống">
+                  {fatal}
+                </Note>
+              )}
 
-          {current === "os" && <StepOs family={family} onChoose={chooseFamily} />}
+              {current === "os" && <StepOs family={family} onChoose={chooseFamily} />}
 
-          {current === "usb" && (
-            <StepUsb disks={disks} selected={selectedDisk} onSelect={setSelectedDisk}
-                     onRefresh={refreshDisks} loading={disksLoading} minBytes={minUsbBytes} />
-          )}
+              {current === "usb" && (
+                <StepUsb disks={disks} selected={selectedDisk} onSelect={setSelectedDisk}
+                         onRefresh={refreshDisks} loading={disksLoading} minBytes={minUsbBytes} />
+              )}
 
-          {current === "hardware" && (
-            <StepHardware hw={hw} checks={rec?.checks ?? []} summary={rec?.check_summary ?? null}
-                          loading={scanning} onElevate={elevate} onRescan={scan} />
-          )}
+              {current === "hardware" && (
+                <StepHardware hw={hw} checks={rec?.checks ?? []} summary={rec?.check_summary ?? null}
+                              loading={scanning} onElevate={elevate} onRescan={scan} />
+              )}
 
-          {current === "release" && family === "linux" && (
-            <StepDistro rec={distros} loading={scanning} chosen={chosenDistro}
-                        onChoose={setChosenDistro} onSeeHardware={() => setStep("hardware")} />
-          )}
-          {current === "release" && family !== "linux" && (
-            <StepRecommend rec={rec} loading={scanning} chosen={chosenRelease}
-                           onChoose={setChosenRelease}
-                           onRefreshCatalog={refreshCatalog} refreshing={refreshingCatalog}
-                           onSeeHardware={() => setStep("hardware")}
-                           languages={languages} language={language} onLanguage={setLanguage} />
-          )}
+              {current === "release" && family === "linux" && (
+                <StepDistro rec={distros} loading={scanning} chosen={chosenDistro}
+                            onChoose={setChosenDistro} onSeeHardware={() => setStep("hardware")} />
+              )}
+              {current === "release" && family !== "linux" && (
+                <StepRecommend rec={rec} loading={scanning} chosen={chosenRelease}
+                               onChoose={setChosenRelease}
+                               onRefreshCatalog={refreshCatalog} refreshing={refreshingCatalog}
+                               onSeeHardware={() => setStep("hardware")}
+                               languages={languages} language={language} onLanguage={setLanguage} />
+              )}
 
-          {current === "source" && (
-            <StepSource family={family ?? "windows"} plan={plan} iso={iso} onIso={setIso} />
-          )}
+              {current === "source" && (
+                <StepSource family={family ?? "windows"} plan={plan} iso={iso} onIso={setIso} />
+              )}
 
-          {current === "format" && (
-            <StepFormat disk={disk} iso={iso} admin={admin === true}
-                        scheme={scheme} onScheme={setScheme}
-                        label={label} onLabel={setLabel}
-                        result={formatResult} onResult={setFormatResult}
-                        onAdminRelaunch={elevate} />
-          )}
+              {current === "format" && (
+                <StepFormat disk={disk} iso={iso} admin={admin === true}
+                            scheme={scheme} onScheme={setScheme}
+                            label={label} onLabel={setLabel}
+                            result={formatResult} onResult={setFormatResult}
+                            onAdminRelaunch={elevate} />
+              )}
 
-          {current === "write" && family === "linux" && (
-            <StepWriteRaw disk={disk} iso={iso} release={distro}
-                          admin={admin === true} onAdminRelaunch={elevate}
-                          onDone={setWriteDone} onDiscarded={() => setIsoDiscarded(true)} />
-          )}
-          {current === "write" && family !== "linux" && (
-            <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
-                       format={formatResult} unattend={unattend} onUnattend={setUnattend}
-                       languages={languages} isoLanguage={language} onDone={setWriteDone}
-                       onDiscarded={() => setIsoDiscarded(true)} />
-          )}
+              {current === "write" && family === "linux" && (
+                <StepWriteRaw disk={disk} iso={iso} release={distro}
+                              admin={admin === true} onAdminRelaunch={elevate}
+                              onDone={setWriteDone} onDiscarded={() => setIsoDiscarded(true)} />
+              )}
+              {current === "write" && family !== "linux" && (
+                <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
+                           format={formatResult} unattend={unattend} onUnattend={setUnattend}
+                           languages={languages} isoLanguage={language} onDone={setWriteDone}
+                           onDiscarded={() => setIsoDiscarded(true)} />
+              )}
 
-          {current === "verify" && (
-            <StepVerify request={bootRequest} writeDone={writeDone} isoDiscarded={isoDiscarded} />
-          )}
+              {current === "verify" && (
+                <StepVerify request={bootRequest} writeDone={writeDone} isoDiscarded={isoDiscarded} />
+              )}
 
-          <div className="actions">
-            <button className="btn" disabled={!prev} onClick={() => prev && setStep(prev)}>
-              ← Quay lại
-            </button>
-            <div className="spacer" />
-            {next && (
-              <button className="btn btn--primary" disabled={!unlocked(next)}
-                      onClick={() => setStep(next)}>
-                Tiếp tục →
+            </div>
+          </div>
+
+          {/* Thanh điều hướng dính đáy vùng nội dung, không cuộn theo. Dùng lại
+              lớp .shell nên hai nút thẳng hàng với hai mép của nội dung phía
+              trên — trên màn rộng, "Tiếp tục" nằm ngay cạnh thứ vừa đọc xong
+              chứ không bị đẩy ra góc màn hình. */}
+          <div className="navbar">
+            <div className="shell navbar__inner">
+              <button className="btn" disabled={!prev} onClick={() => prev && setStep(prev)}>
+                ← Quay lại
               </button>
-            )}
+              <span className="navbar__pos">
+                Bước {at + 1}/{flow.length} · {meta(current, family).title}
+              </span>
+              <div className="spacer" />
+              {next && (
+                <button className="btn btn--primary" disabled={!unlocked(next)}
+                        onClick={() => setStep(next)}>
+                  Tiếp tục →
+                </button>
+              )}
+            </div>
           </div>
         </main>
       </div>

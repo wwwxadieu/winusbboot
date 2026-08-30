@@ -157,26 +157,22 @@ export function StepSource({
             </span>
           </button>
 
-          <button className="opt" onClick={autoDownload}
-                  disabled={busy !== null || !plan?.resolve}>
-            <span className="opt__radio" />
-            <span>
-              <span className="opt__title">
-                Tải tự động từ nguồn chính thức
-                {plan && !plan.resolve && " — không dùng được"}
+          {/* Chỉ dựng nút này khi thật sự có đường tải tự động. Một nút mờ đi
+              vẫn là một lời hứa: người dùng sẽ đi tìm cách bật nó lên. Bản nào
+              chỉ tải thủ công được thì khung cảnh báo phía trên đã nói rõ vì
+              sao, và ở đây chỉ còn hai lựa chọn dùng được thật. */}
+          {plan?.resolve && (
+            <button className="opt" onClick={autoDownload} disabled={busy !== null}>
+              <span className="opt__radio" />
+              <span>
+                <span className="opt__title">Tải tự động từ nguồn chính thức</span>
+                <span className="opt__desc">
+                  Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự
+                  đối chiếu mã băm. File lưu vào thư mục riêng của ứng dụng.
+                </span>
               </span>
-              <span className="opt__desc">
-                {/* Mô tả phải nói đúng trạng thái hiện tại. Để nguyên câu quảng
-                    cáo tính năng trong khi nút đã tắt thì người dùng sẽ ngồi
-                    bấm mãi mà không hiểu vì sao không có gì xảy ra. */}
-                {plan && !plan.resolve
-                  ? "Xem lý do ở khung phía trên."
-                  : family === "linux"
-                    ? "Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự đối chiếu mã băm. File lưu vào thư mục riêng của ứng dụng."
-                    : "Lấy link chính thức rồi tải về."}
-              </span>
-            </span>
-          </button>
+            </button>
+          )}
 
           <button className="opt" onClick={openOfficial} disabled={busy !== null || !plan}>
             <span className="opt__radio" />

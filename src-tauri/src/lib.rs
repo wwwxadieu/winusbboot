@@ -149,14 +149,6 @@ fn official_download_page(release_id: String) -> String {
 }
 
 #[tauri::command]
-async fn fetch_download_links(
-    release_id: String,
-    language: String,
-) -> Result<Vec<download::DownloadOption>> {
-    download::fetch_official_links(&release_id, &language).await
-}
-
-#[tauri::command]
 async fn download_iso(app: AppHandle, url: String, dest: String) -> Result<String> {
     let path = std::path::PathBuf::from(&dest);
     let handle = app.clone();
@@ -315,7 +307,6 @@ pub fn run() {
             relaunch_as_admin,
             inspect_iso,
             official_download_page,
-            fetch_download_links,
             download_iso,
             hash_iso,
             iso_download_dir,

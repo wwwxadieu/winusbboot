@@ -20,6 +20,22 @@
 
   --dur: 220ms;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* --- Kích thước khung ---
+     Cả ba đại lượng này đều co giãn theo cửa sổ thay vì đóng đinh một con số,
+     vì cùng một file giao diện phải trông hợp lý ở cả cửa sổ 900px lẫn màn 2K.
+
+     `--shell-max` là chiều rộng tối đa của cột nội dung. Không có nó thì trên
+     màn 2560px mọi thứ bị kéo dài hết bề ngang: dòng chữ dài quá tầm mắt, còn
+     các lưới thẻ tự tách thành sáu bảy cột mỏng dính. Có nó thì nội dung nằm
+     giữa, và quan trọng hơn là nút bấm không bị đẩy ra tận mép màn hình.
+
+     Cố tình là một con số cố định chứ không phải `clamp(…, vw, …)`: bất kỳ vế
+     nào theo vw cũng làm cột nội dung hẹp hơn chỗ đang có ở các cửa sổ cỡ vừa,
+     tức là tự tạo ra đúng thứ khoảng trống mà giới hạn này sinh ra để tránh. */
+  --shell-max: 1280px;
+  --rail-w: clamp(206px, 16vw, 262px);
+  --gutter: clamp(18px, 2.2vw, 38px);
 }
 
 /* --- Chế độ tối (mặc định) --- */
@@ -143,7 +159,7 @@ body::before {
 .winbtn:hover { background: var(--glass-hi); color: var(--text); }
 .winbtn--close:hover { background: var(--danger); color: #fff; }
 
-.body { display: grid; grid-template-columns: 246px 1fr; min-height: 0; }
+.body { display: grid; grid-template-columns: var(--rail-w) 1fr; min-height: 0; }
 
 /* ------------------------------------------------------------ Cột bước */
 
@@ -200,8 +216,47 @@ body::before {
 
 /* ------------------------------------------------------------- Nội dung */
 
-.main { overflow-y: auto; padding: 26px 30px 34px; min-width: 0; }
-.main__head { margin-bottom: 20px; }
+/* Vùng nội dung chia làm hai hàng: phần cuộn được, và thanh điều hướng luôn
+   dính đáy. Trước đây hai nút "Quay lại / Tiếp tục" nằm cuối vùng cuộn, nên ở
+   bước dài người dùng phải cuộn xuống đáy mới thấy chúng — và trên màn rộng thì
+   chuột phải đi hết một đường chéo màn hình. Giờ chúng luôn ở đúng một chỗ. */
+.main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+/* `safe center` căn giữa theo chiều dọc khi nội dung ngắn hơn khung — bước chọn
+   hệ điều hành hay bước nguồn cài không còn để lại một khoảng trống lớn phía
+   dưới. Từ khoá `safe` là phần thiết yếu: thiếu nó thì nội dung dài hơn khung
+   sẽ bị cắt mất phần đầu và không cuộn ngược lên được. */
+.main__scroll {
+  overflow-y: auto;
+  padding: clamp(16px, 2.4vh, 28px) var(--gutter);
+  display: grid;
+  align-content: safe center;
+}
+
+/* Cột nội dung: rộng hết mức có thể nhưng không vượt --shell-max, và luôn nằm
+   giữa. Thanh điều hướng dùng lại đúng lớp này để nút của nó thẳng hàng với
+   nội dung phía trên. */
+.shell { width: 100%; max-width: var(--shell-max); margin-inline: auto; min-width: 0; }
+
+.navbar {
+  border-top: 1px solid var(--border);
+  background: var(--glass-lo);
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  padding: 10px var(--gutter);
+}
+.navbar__inner { display: flex; align-items: center; gap: 12px; }
+.navbar__pos {
+  font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.main__head { margin-bottom: 18px; }
 .main__head h1 { font-size: 23px; font-weight: 660; letter-spacing: -0.022em; }
 .main__head p { color: var(--text-dim); margin-top: 5px; max-width: 66ch; }
 
@@ -221,8 +276,10 @@ body::before {
 }
 
 .grid { display: grid; gap: 12px; }
-.grid--2 { grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
-.grid--3 { grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+/* `min(100%, …)` để ở cửa sổ hẹp một cột không bao giờ rộng hơn khung cha —
+   không có nó thì lưới tràn ngang và cả trang có thanh cuộn ngang. */
+.grid--2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.grid--3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
 
 /* ---------------------------------------------------------------- Thẻ ổ */
 
@@ -551,6 +608,53 @@ code {
 }
 @media (max-width: 760px) {
   .check__req { display: none; }
+}
+
+/* ------------------------------------------------------- Co theo cửa sổ */
+
+/* Cửa sổ hẹp: cột bước dựng đứng chiếm quá nhiều bề ngang, nên đổi thành một
+   dải ngang cuộn được ở trên. Vẫn đủ chỗ cho số thứ tự và tên bước — chỉ dòng
+   mô tả phụ là bỏ đi. */
+@media (max-width: 980px) {
+  .body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .rail {
+    flex-direction: row; align-items: center; gap: 4px;
+    padding: 8px 10px;
+    overflow-x: auto; overflow-y: hidden;
+    border-right: 0; border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  .rail::-webkit-scrollbar { height: 0; }
+  .rail__label { display: none; }
+  .step { width: auto; flex: 0 0 auto; padding: 6px 9px; gap: 8px; }
+  .step__num { width: 22px; height: 22px; }
+  .step__title { white-space: nowrap; font-size: 12.5px; }
+  .step__sub { display: none; }
+  .rail__foot { margin-top: 0; padding-top: 0; flex: 0 0 auto; }
+}
+
+/* Cửa sổ thấp (laptop 768px, hoặc người dùng kéo cao độ xuống): cắt bớt khoảng
+   đệm để phần nội dung thật sự còn chỗ, thay vì để viền ăn hết màn hình. */
+@media (max-height: 720px) {
+  .main__scroll { padding-top: 14px; padding-bottom: 14px; }
+  .main__head { margin-bottom: 13px; }
+  .main__head h1 { font-size: 20px; }
+  .panel { padding: 14px; }
+  .panel + .panel { margin-top: 11px; }
+  .navbar { padding-top: 8px; padding-bottom: 8px; }
+  .oscard { padding: 16px 18px 15px; }
+  .oscard__mark { width: 38px; height: 38px; margin-bottom: 10px; }
+  .oscard__points { margin-top: 11px; gap: 6px; }
+}
+
+/* Màn 2K trở lên: nới nhẹ cỡ chữ và bán kính bo. Ở 2560px thì 14px chữ trông
+   như chú thích, và một cột nội dung 1280px giữa màn hình cần nhịp thị giác lớn
+   hơn một chút để không bị hụt. */
+@media (min-width: 1900px) {
+  body { font-size: 15px; }
+  .main__head h1 { font-size: 26px; }
+  .panel { padding: 22px; }
+  .btn { padding: 10px 19px; font-size: 13.5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

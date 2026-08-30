@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  BootCheckRequest, BootReport, CatalogState, DistroRecommendation, DownloadOption,
+  BootCheckRequest, BootReport, CatalogState, DistroRecommendation,
   DownloadProgress, FormatRequest, FormatResult, HardwareReport, IsoInfo, RawWriteRequest,
   Recommendation, ResolvedIso, ReadbackResult, SetupLanguage, UnattendConfig, UsbDisk,
   WriteProgress,
@@ -24,8 +24,6 @@ export const api = {
   inspectIso: (path: string) => invoke<IsoInfo>("inspect_iso", { path }),
   officialDownloadPage: (releaseId: string) =>
     invoke<string>("official_download_page", { releaseId }),
-  fetchDownloadLinks: (releaseId: string, language: string) =>
-    invoke<DownloadOption[]>("fetch_download_links", { releaseId, language }),
   downloadIso: (url: string, dest: string) => invoke<string>("download_iso", { url, dest }),
   hashIso: (path: string) => invoke<string>("hash_iso", { path }),
   isoDownloadDir: () => invoke<string>("iso_download_dir"),
