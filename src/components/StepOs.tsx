@@ -1,5 +1,5 @@
 import type { OsFamily } from "../types";
-import { Note, Panel } from "./ui";
+import { Why } from "./ui";
 
 /**
  * Logo bốn ô của Windows, và logo chim cánh cụt tối giản cho Linux. Vẽ tay bằng
@@ -41,8 +41,8 @@ const CHOICES: {
     sub: "Windows 11 · Windows 10 · các bản LTSC",
     mark: WindowsMark,
     points: [
-      "Quét 13 mục phần cứng rồi gợi ý đúng bản Windows máy bạn cài được",
-      "Bỏ qua toàn bộ màn hình hỏi đáp ban đầu bằng autounattend.xml",
+      "Quét máy rồi gợi ý đúng bản Windows cài được",
+      "Trả lời sẵn các màn hình hỏi đáp lúc cài",
       "Cần ổ USB từ 8 GB trở lên",
     ],
   },
@@ -52,9 +52,9 @@ const CHOICES: {
     sub: "Ubuntu · Linux Mint · Debian · Fedora · và 5 bản khác",
     mark: LinuxMark,
     points: [
-      "Gợi ý bản chạy mượt nhất với đúng lượng RAM của máy",
-      "Tải thẳng từ nguồn chính thức và đối chiếu mã băm tự động",
-      "Miễn phí, mã nguồn mở; ổ USB 4 GB là đủ với phần lớn bản",
+      "Gợi ý bản chạy mượt với đúng lượng RAM của máy",
+      "Tải từ nguồn chính thức, tự đối chiếu mã băm",
+      "Ổ USB 4 GB là đủ với phần lớn bản",
     ],
   },
 ];
@@ -69,11 +69,7 @@ export function StepOs({
   return (
     <>
       <div className="main__head">
-        <h1>Chọn hệ điều hành</h1>
-        <p>
-          Hai họ hệ điều hành được tạo USB theo hai cách khác hẳn nhau, nên lựa chọn ở đây
-          quyết định các bước phía sau. Đổi lại lúc nào cũng được — chỉ cần quay về bước này.
-        </p>
+        <h1>Bạn muốn cài gì?</h1>
       </div>
 
       <div className="grid grid--2">
@@ -99,15 +95,14 @@ export function StepOs({
       </div>
 
       {family === "linux" && (
-        <Panel title="Khác biệt khi tạo USB Linux">
-          <Note type="info" icon="◈">
-            ISO Linux được ghi nguyên khối ra USB (tương đương lệnh <code>dd</code>), vì mã
-            khởi động nằm ngay trong file ảnh đĩa. Vì vậy luồng Linux <b style={{ display: "inline" }}>không
-            có bước Format riêng</b> — thao tác ghi đã xoá và dựng lại toàn bộ ổ — và cũng
-            không có phần cài đặt tự động, thứ chỉ Windows Setup mới đọc.
-          </Note>
-        </Panel>
+        <Why label="USB Linux khác USB Windows chỗ nào?">
+          ISO Linux được ghi nguyên khối ra ổ (tương đương lệnh <code>dd</code>) vì mã khởi động
+          nằm ngay trong file ảnh đĩa. Nên luồng Linux không có bước Format riêng — thao tác ghi
+          đã xoá và dựng lại toàn bộ ổ — và cũng không có phần cài đặt tự động, thứ chỉ Windows
+          Setup mới đọc.
+        </Why>
       )}
+
     </>
   );
 }

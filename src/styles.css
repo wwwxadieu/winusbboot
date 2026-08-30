@@ -539,6 +539,50 @@ code {
 .note[data-t="ok"] { border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: color-mix(in srgb, var(--ok) 9%, transparent); }
 .note + .note, .note + .panel, .panel + .note { margin-top: 12px; }
 
+/* --------------------------------------------- Phần bung ra khi cần đọc */
+
+.why { margin-top: 10px; }
+.why > summary {
+  display: inline-flex; align-items: center; gap: 6px; width: fit-content;
+  cursor: pointer; list-style: none; font-size: 12.5px; color: var(--text-dim);
+  border-bottom: 1px dashed var(--border-hi); padding-bottom: 1px;
+}
+.why > summary::-webkit-details-marker { display: none; }
+.why > summary::before {
+  content: "›"; font-size: 14px; line-height: 1; transition: transform 160ms var(--ease);
+}
+.why[open] > summary::before { transform: rotate(90deg); }
+.why > summary:hover { color: var(--text); }
+.why__body {
+  margin-top: 9px; font-size: 12.5px; line-height: 1.55;
+  color: var(--text-dim); max-width: 68ch;
+}
+
+.fold {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(34px) saturate(175%);
+  -webkit-backdrop-filter: blur(34px) saturate(175%);
+  box-shadow: var(--shadow), var(--inner-hi);
+  padding: 14px 18px;
+}
+.fold + .fold, .panel + .fold, .fold + .panel, .note + .fold, .fold + .note { margin-top: 14px; }
+.fold > summary {
+  display: flex; align-items: baseline; gap: 10px; cursor: pointer; list-style: none;
+  flex-wrap: wrap;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before {
+  content: "›"; font-size: 15px; line-height: 1.2; color: var(--text-faint);
+  transition: transform 160ms var(--ease);
+}
+.fold[open] > summary::before { transform: rotate(90deg); }
+.fold__title { font-size: 13.5px; font-weight: 620; }
+.fold__hint { font-size: 12.2px; color: var(--text-dim); }
+.fold__body { margin-top: 15px; }
+.fold[open] { padding-bottom: 18px; }
+
 /* ------------------------------------------------------------ Lựa chọn */
 
 .opt {
@@ -589,6 +633,10 @@ code {
 /* --------------------------------------------------- Bảng tổng kết kiểm tra */
 
 .tally { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+/* Chi tiết phần cứng nằm trong khối gập, không còn khung `.panel` bọc ngoài
+   như hồi nó là một bước riêng — nên khoảng cách phải tự đặt ở đây. */
+.fold__machine { font-size: 13.5px; font-weight: 620; margin-bottom: 12px; }
+.legend + .panel, .tally + .panel { margin-top: 14px; }
 .tally__big { font-size: 34px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.05; }
 .tally__big em { font-style: normal; font-size: 16px; font-weight: 600; color: var(--text-dim); }
 .tally__verdict { font-size: 13px; color: var(--text-dim); margin-top: 4px; max-width: 48ch; }

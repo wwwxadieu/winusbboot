@@ -6,11 +6,15 @@ import { bytes, shortPath } from "../lib/format";
 import { Note, Panel, Progress } from "./ui";
 
 /**
- * Bước kèm driver vào USB.
+ * Kèm driver vào USB, không có tiêu đề trang.
  *
- * Lý do bước này tồn tại: cài lại Windows xong thì máy hay mất Wi-Fi, mà muốn
+ * Lý do phần này tồn tại: cài lại Windows xong thì máy hay mất Wi-Fi, mà muốn
  * tải driver Wi-Fi thì lại cần Wi-Fi. Đưa driver lên USB từ trước là cách duy
  * nhất phá được vòng luẩn quẩn đó.
+ *
+ * Nó từng là một bước riêng, nhưng là bước không bắt buộc — phần lớn người dùng
+ * đi thẳng qua. Nay nó gập lại trong bước cuối: ai cần thì mở ra, ai không cần
+ * thì không phải bấm qua một trang trắng.
  */
 
 const FILTERS: { id: DriverFilter; title: string; desc: string }[] = [
@@ -44,7 +48,7 @@ function severity(d: DeviceMatch): number {
   return d.kind === "wifi" ? 0 : d.kind === "storage" ? 1 : 2;
 }
 
-export function StepDrivers({
+export function DriversBlock({
   driveLetter,
   admin,
   onAdminRelaunch,
@@ -154,18 +158,9 @@ export function StepDrivers({
 
   return (
     <>
-      <div className="main__head">
-        <h1>Driver kèm theo USB</h1>
-        <p>
-          Cài lại Windows xong máy hay mất Wi-Fi, mà tải driver Wi-Fi thì lại cần Wi-Fi. Đặt
-          driver lên USB từ bây giờ thì Windows Setup tự cài chúng trong lúc cài máy — xong là
-          có mạng ngay. Bước này không bắt buộc; bỏ qua vẫn dùng USB bình thường.
-        </p>
-      </div>
-
       {!driveLetter && (
-        <Note type="warn" icon="!" title="Chưa có ổ để chép">
-          Hãy hoàn tất bước ghi bộ cài trước — driver được chép vào chính chiếc USB đó.
+        <Note type="warn" icon="!">
+          Hãy ghi xong bộ cài trước — driver được chép vào chính chiếc USB đó.
         </Note>
       )}
 
@@ -182,8 +177,8 @@ export function StepDrivers({
               </span>
               <span className="opt__desc">
                 {admin
-                  ? "Lấy đúng bộ driver đang chạy được trên máy này. Chính xác nhất nếu bạn đang cài lại cho chính chiếc máy đang dùng. Mất vài phút và khoảng 0,5–3 GB."
-                  : "Ứng dụng cần quyền quản trị mới đọc được kho driver của Windows."}
+                  ? "Chính xác nhất khi cài lại cho chính máy này. Mất vài phút, khoảng 0,5–3 GB."
+                  : "Cần quyền quản trị mới đọc được kho driver của Windows."}
               </span>
             </span>
           </button>
@@ -193,8 +188,7 @@ export function StepDrivers({
             <span>
               <span className="opt__title">Chọn thư mục driver có sẵn</span>
               <span className="opt__desc">
-                Bộ driver bạn đã tải từ trang của hãng và giải nén ra. Ứng dụng tự tìm mọi file
-                .inf bên trong, kể cả nằm sâu nhiều tầng thư mục.
+                Bộ driver tải từ trang của hãng, đã giải nén. Ứng dụng tự tìm mọi file .inf bên trong.
               </span>
             </span>
           </button>
@@ -203,7 +197,7 @@ export function StepDrivers({
         {!admin && (
           <div className="actions">
             <button className="btn btn--sm" onClick={onAdminRelaunch}>
-              Chạy lại với quyền quản trị
+              Mở lại với quyền quản trị
             </button>
           </div>
         )}
@@ -250,8 +244,8 @@ export function StepDrivers({
           <Panel title="Thiết bị của máy này">
             {!analysis.devices_read ? (
               <Note type="warn" icon="!">
-                Không đọc được danh sách thiết bị của máy, nên không đối chiếu được. Driver vẫn
-                chép lên USB bình thường — chỉ là ứng dụng không khẳng định được máy đã đủ hay chưa.
+                Không đọc được danh sách thiết bị nên không đối chiếu được. Driver vẫn chép lên
+                USB bình thường.
               </Note>
             ) : devices.length === 0 ? (
               <Note type="warn" icon="!">
@@ -354,10 +348,9 @@ export function StepDrivers({
 
             {analysis.set.installer_only > 0 && (
               <div style={{ marginTop: 12 }}>
-                <Note type="info" icon="i" title="Bỏ qua một số bộ cài dạng .exe">
-                  Có {analysis.set.installer_only} thư mục chỉ chứa file cài đặt .exe/.msi. Windows
-                  Setup chỉ nhồi được driver dạng .inf vào ảnh cài, nên những thứ đó không chép
-                  được — hãy chạy chúng bằng tay sau khi cài xong nếu cần.
+                <Note type="info" icon="i">
+                  Bỏ qua {analysis.set.installer_only} thư mục chỉ có file cài .exe/.msi — Windows
+                  Setup chỉ nhồi được driver dạng .inf. Hãy chạy chúng bằng tay sau khi cài xong.
                 </Note>
               </div>
             )}
@@ -390,8 +383,8 @@ export function StepDrivers({
       {report && (
         <Panel title="Đã chép xong">
           <Note type="ok" icon="✓" title={`Đã đặt ${report.packages} gói driver lên USB`}>
-            {bytes(report.bytes)} nằm ở {report.dest}. Windows Setup tự tìm thư mục này và cài
-            các driver trong đó vào máy — không cần bạn làm gì thêm sau khi cài.
+            {bytes(report.bytes)} nằm ở {report.dest}. Windows Setup tự tìm và cài chúng — không
+            cần làm gì thêm.
           </Note>
 
           {fromExport && (

@@ -276,7 +276,7 @@ fn boot_letter(disk: &usb::UsbDisk, label: &str) -> Result<String> {
         .ok_or_else(|| {
             AppError::new(
                 "no_letter",
-                "Không tìm thấy phân vùng có ký tự ổ đĩa trên USB. Hãy chạy lại bước Format.",
+                "Không tìm thấy phân vùng có ký tự ổ đĩa trên USB. Hãy ghi lại từ đầu.",
             )
         })
 }
@@ -397,7 +397,8 @@ where
         return Err(AppError::new(
             "esd_too_big",
             "File install.esd trong ISO này lớn hơn 4 GB nên không nằm vừa phân vùng FAT32, \
-             và DISM không tách được file .esd. Hãy quay lại bước Format và chọn \"MBR + NTFS\".",
+             và DISM không tách được file .esd. Hãy mở \"Kiểu phân vùng và tên ổ\" \
+             ở bước Ghi rồi chọn \"MBR + NTFS\".",
         ));
     }
 

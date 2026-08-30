@@ -4,7 +4,7 @@ import type {
   BootCheck, BootCheckRequest, BootReport, CheckLevel, ReadbackResult, WriteProgress,
 } from "../types";
 import { bytes, pct, rateLine } from "../lib/format";
-import { Empty, Note, Panel, Progress } from "./ui";
+import { Empty, Fold, Note, Panel, Progress, Why } from "./ui";
 
 const MARK: Record<CheckLevel, string> = { pass: "✓", warn: "!", fail: "✕", skipped: "?" };
 
@@ -62,7 +62,12 @@ function BootWays({ r }: { r: BootReport }) {
   );
 }
 
-export function StepVerify({
+/**
+ * Kiểm tra chiếc USB vừa ghi, không có tiêu đề trang: khối này nằm trong bước
+ * cuối cùng cùng với phần kèm driver, vì cả hai đều là việc *sau khi* ghi xong
+ * chứ không phải hai chặng nối tiếp nhau người dùng phải đi qua.
+ */
+export function VerifyBlock({
   request,
   writeDone,
   isoDiscarded,
@@ -133,18 +138,6 @@ export function StepVerify({
     }
   }
 
-  if (!writeDone) {
-    return (
-      <>
-        <div className="main__head"><h1>Kiểm tra khởi động</h1></div>
-        <Note type="warn" icon="!" title="Chưa ghi xong">
-          Hãy hoàn tất bước ghi trước. Bước này đọc lại chính chiếc USB vừa ghi để xác nhận
-          nó khởi động được.
-        </Note>
-      </>
-    );
-  }
-
   const groups: string[] = [];
   for (const c of report?.checks ?? []) if (!groups.includes(c.group)) groups.push(c.group);
 
@@ -155,22 +148,12 @@ export function StepVerify({
 
   return (
     <>
-      <div className="main__head">
-        <h1>Kiểm tra khởi động</h1>
-        <p>
-          Ghi xong không đồng nghĩa với boot được. Bước này đọc lại chiếc USB vừa ghi và đối
-          chiếu với những gì firmware sẽ đi tìm lúc khởi động.
-        </p>
-      </div>
-
       {error && <Note type="danger" icon="✕" title="Không kiểm tra được">{error}</Note>}
 
       {!report && (
         <Panel>
           <Empty icon="🔍" title={checking ? "Đang kiểm tra…" : "Chưa kiểm tra"}>
-            {checking
-              ? "Đang đọc cấu trúc phân vùng và các file khởi động trên USB."
-              : "Bấm nút bên dưới để kiểm tra lại."}
+            {checking ? "Đang đọc cấu trúc phân vùng và các file khởi động." : ""}
           </Empty>
           <div className="actions">
             <button className="btn btn--sm" onClick={run} disabled={checking}>
@@ -182,7 +165,7 @@ export function StepVerify({
 
       {report && (
         <>
-          <Note type={noteType} icon={report.verdict === "ready" ? "✓" : "◈"} title="Kết luận">
+          <Note type={noteType} icon={report.verdict === "ready" ? "✓" : "◈"}>
             {report.summary}
           </Note>
 
@@ -194,42 +177,46 @@ export function StepVerify({
             {report.verdict === "not_bootable" && (report.bootable_uefi || report.bootable_legacy) && (
               <div style={{ marginTop: 12 }}>
                 <Note type="warn" icon="!">
-                  Máy vẫn nạp được USB này và vào tới màn hình cài đặt — vấn đề nằm ở phần
-                  nội dung bộ cài bên dưới, nên quá trình cài sẽ dừng lại giữa chừng.
+                  Máy vẫn nạp được USB này và vào tới màn hình cài đặt — hỏng nằm ở nội dung bộ
+                  cài, nên quá trình cài sẽ dừng giữa chừng.
                 </Note>
               </div>
             )}
-            <div className="legend" style={{ marginTop: 14 }}>
-              <span><b style={{ background: "var(--ok)" }} />Đạt · {report.passed}</span>
-              <span><b style={{ background: "var(--warn)" }} />Cần biết · {report.warned}</span>
-              <span><b style={{ background: "var(--danger)" }} />Không đạt · {report.failed}</span>
-              <span><b style={{ background: "var(--text-faint)" }} />Không đọc được · {report.skipped}</span>
-            </div>
           </Panel>
 
-          {groups.map((g) => (
-            <Panel key={g} title={g}>
-              {report.checks.filter((c) => c.group === g).map((c) => <CheckRow key={c.id} c={c} />)}
-            </Panel>
-          ))}
+          <Fold
+            title="Chi tiết kiểm tra"
+            hint={`${report.passed} đạt · ${report.warned} cần biết · ${report.failed} không đạt · ${report.skipped} không đọc được`}
+          >
+            {groups.map((g) => (
+              <Panel key={g} title={g}>
+                {report.checks.filter((c) => c.group === g).map((c) => <CheckRow key={c.id} c={c} />)}
+              </Panel>
+            ))}
+            <div className="actions">
+              <button className="btn btn--sm" onClick={run} disabled={checking}>
+                {checking && <span className="spinner" />} Kiểm tra lại
+              </button>
+            </div>
+          </Fold>
         </>
       )}
 
-      <Panel title="Đối chiếu lại toàn bộ dữ liệu">
-        <Note type="info" icon="i">
-          Các mục ở trên đọc cấu trúc ổ — đủ để bắt ghi hụt và thiếu file khởi động. Chúng
-          <b style={{ display: "inline" }}> không</b> bắt được ổ USB khai khống dung lượng hay
-          bộ nhớ flash sắp chết: hai loại đó nhận hết dữ liệu lúc ghi rồi âm thầm vứt đi, nên
-          mọi thứ trông vẫn bình thường. Chỉ có đọc ngược lại và so từng byte mới phát hiện ra.
-          Việc này mất gần bằng thời gian ghi.
-        </Note>
+      <Fold title="Đối chiếu lại từng byte" hint="Bắt ổ USB dỏm — mất gần bằng thời gian ghi">
+        <Why label="Khi nào cần tới?">
+          Các mục ở trên đọc cấu trúc ổ — đủ để bắt ghi hụt và thiếu file khởi động. Chúng không
+          bắt được ổ USB khai khống dung lượng hay bộ nhớ flash sắp chết: hai loại đó nhận hết
+          dữ liệu lúc ghi rồi âm thầm vứt đi, nên mọi thứ trông vẫn bình thường. Chỉ có đọc
+          ngược lại và so từng byte mới phát hiện ra.
+        </Why>
 
         {isoDiscarded ? (
-          <Note type="warn" icon="!" title="Không đối chiếu được vì file ISO đã bị dọn">
-            Bạn đã bật "Xoá file ISO sau khi ghi xong" ở bước trước, nên không còn bản gốc
-            để so. Các mục kiểm tra cấu trúc ở trên vẫn có giá trị. Muốn dùng chức năng này
-            thì tắt tuỳ chọn xoá ở bước Ghi rồi ghi lại.
-          </Note>
+          <div style={{ marginTop: 12 }}>
+            <Note type="warn" icon="!">
+              File ISO đã bị dọn sau khi ghi nên không còn bản gốc để so. Muốn dùng chức năng
+              này thì tắt tuỳ chọn xoá ở bước Ghi rồi ghi lại.
+            </Note>
+          </div>
         ) : (
           <div className="actions">
             <button className="btn btn--sm" onClick={startReadback} disabled={reading || !request}>
@@ -266,9 +253,7 @@ export function StepVerify({
                 <div className="stat">
                   <div className="stat__k">Đọc lại từ USB</div>
                   <div className="stat__v mono">{readback.actual_sha}</div>
-                  <div className="stat__note">
-                    Đã đọc lại {bytes(readback.compared)} từ ổ USB.
-                  </div>
+                  <div className="stat__note">Đã đọc lại {bytes(readback.compared)} từ ổ USB.</div>
                 </div>
                 <div className="stat">
                   <div className="stat__k">File ảnh gốc</div>
@@ -291,7 +276,7 @@ export function StepVerify({
             )}
           </div>
         )}
-      </Panel>
+      </Fold>
     </>
   );
 }

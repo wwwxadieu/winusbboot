@@ -6,10 +6,11 @@ import type {
   WriteProgress,
 } from "../types";
 import { bytes, pct, rateLine } from "../lib/format";
-import { Note, Panel, Progress } from "./ui";
+import { Fold, Note, Panel, Progress, Why } from "./ui";
 
 const STAGE_NAME: Record<string, string> = {
   check: "Kiểm tra an toàn",
+  partition: "Chia phân vùng",
   mount: "Gắn file ISO",
   copy: "Chép bộ cài",
   split: "Tách install.wim",
@@ -17,6 +18,37 @@ const STAGE_NAME: Record<string, string> = {
   unattend: "Thiết lập cài đặt tự động",
   done: "Hoàn tất",
 };
+
+/**
+ * Format và ghi là một việc, không phải hai.
+ *
+ * Trước đây chúng là hai bước riêng, và bước Format luôn dẫn thẳng tới bước Ghi
+ * — không có luồng nào format xong rồi dừng lại. Tách ra chỉ tạo thêm một trang
+ * phải đọc, một ô phải tick, một nút phải bấm, cộng một trạng thái hỏng người
+ * dùng tự tạo ra được: format ổ này rồi đi ghi lên ổ khác. Nay một nút chạy
+ * liền cả hai, và thanh tiến trình đếm chung tám chặng.
+ */
+const FORMAT_STAGES = 2;
+const WRITE_STAGES = 6;
+const ALL_STAGES = FORMAT_STAGES + WRITE_STAGES;
+
+const SCHEMES: { id: PartitionScheme; title: string; desc: string }[] = [
+  {
+    id: "gpt_fat32",
+    title: "GPT + FAT32 — khuyến nghị",
+    desc: "Chuẩn cho mọi máy UEFI đời mới.",
+  },
+  {
+    id: "mbr_fat32",
+    title: "MBR + FAT32 — tương thích rộng",
+    desc: "Boot được cả máy UEFI ở chế độ CSM lẫn máy BIOS đời cũ.",
+  },
+  {
+    id: "mbr_ntfs",
+    title: "MBR + NTFS — cho máy BIOS đời cũ",
+    desc: "Không giới hạn 4 GB mỗi file, nhưng máy chỉ UEFI sẽ không nhận.",
+  },
+];
 
 const TZ = [
   { id: "SE Asia Standard Time", label: "Hà Nội, Bangkok, Jakarta (GMT+7)" },
@@ -58,9 +90,13 @@ function Toggle({
 export function StepWrite({
   disk,
   iso,
+  admin,
+  onAdminRelaunch,
   scheme,
+  onScheme,
   label,
-  format,
+  onLabel,
+  onFormatted,
   unattend,
   onUnattend,
   languages,
@@ -70,23 +106,31 @@ export function StepWrite({
 }: {
   disk: UsbDisk | null;
   iso: IsoInfo | null;
+  admin: boolean;
+  onAdminRelaunch: () => void;
   scheme: PartitionScheme;
+  onScheme: (s: PartitionScheme) => void;
   label: string;
-  format: FormatResult | null;
+  onLabel: (v: string) => void;
+  /** Ổ đã format nằm ở ký tự nào — bước cuối cần biết để chép driver vào đó. */
+  onFormatted: (r: FormatResult | null) => void;
   unattend: UnattendConfig;
   onUnattend: (c: UnattendConfig) => void;
   languages: SetupLanguage[];
   /** Tên Microsoft của ngôn ngữ ISO đã chọn ở bước Phiên bản. */
   isoLanguage: string;
-  /** Bước Kiểm tra chỉ mở ra khi ghi xong, nên trạng thái này phải nằm ở App. */
+  /** Bước cuối chỉ mở ra khi ghi xong, nên trạng thái này phải nằm ở App. */
   onDone: (v: boolean) => void;
-  /** Báo lên App rằng file ISO đã bị dọn, để bước Kiểm tra biết mà giải thích. */
+  /** Báo lên App rằng file ISO đã bị dọn, để bước cuối biết mà giải thích. */
   onDiscarded: () => void;
 }) {
-  const [running, setRunning] = useState(false);
+  const [phase, setPhase] = useState<null | "format" | "write">(null);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prog, setProg] = useState<WriteProgress | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const running = phase !== null;
+
   // Nút bắt đầu ghi nằm cuối trang, còn thanh tiến trình nằm trên đầu — bấm
   // xong mà không cuộn lên thì người dùng nhìn vào một trang không có gì thay
   // đổi và tưởng chưa chạy. Cuộn giúp họ đúng một lần, lúc bắt đầu.
@@ -94,6 +138,7 @@ export function StepWrite({
   useEffect(() => {
     if (running) progRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [running]);
+
   // Chỉ dọn được file do ứng dụng tự tải; file người dùng tự chọn là của họ.
   const [cleanup, setCleanup] = useState(true);
   const [discarded, setDiscarded] = useState<string | null>(null);
@@ -104,7 +149,14 @@ export function StepWrite({
     onDone(false);
     setError(null);
     setProg(null);
+    // Ô xác nhận xoá dữ liệu không được nhớ qua một chiếc ổ khác.
+    setConfirmed(false);
   }, [disk?.number, iso?.path, onDone]);
+
+  // ISO không khởi động được UEFI thì GPT là lựa chọn vô nghĩa.
+  useEffect(() => {
+    if (iso && !iso.bootable_uefi && scheme === "gpt_fat32") onScheme("mbr_ntfs");
+  }, [iso, scheme, onScheme]);
 
   // Kiến trúc trong file trả lời phải khớp bộ cài, sai là Setup bỏ qua cả file.
   useEffect(() => {
@@ -118,46 +170,71 @@ export function StepWrite({
   const acc = unattend.local_account;
   const isoLabel =
     languages.find((l) => l.ms_name === isoLanguage)?.label ?? isoLanguage;
+  const schemeTitle = SCHEMES.find((s) => s.id === scheme)?.title.split(" — ")[0] ?? scheme;
 
   async function start() {
     if (!disk || !iso) return;
     setError(null);
     setDone(false);
-    setRunning(true);
+    onDone(false);
+    onFormatted(null);
+    setProg(null);
+
+    const volume = volumeName(label);
     try {
+      // --- Xoá và chia lại phân vùng ---
+      setPhase("format");
+      // Lấy vân tay ổ ngay trước khi xoá thay vì dùng giá trị đọc từ trước:
+      // nếu người dùng vừa rút ra cắm lại ổ khác, backend sẽ từ chối.
       const token = await api.diskToken(disk.number);
-      const un = await events.onWriteProgress(setProg);
+      const unFormat = await events.onFormatProgress(setProg);
+      let formatted: FormatResult;
+      try {
+        formatted = await api.formatUsb({
+          disk_number: disk.number,
+          scheme,
+          label: volume,
+          confirm_token: token,
+        });
+      } finally {
+        unFormat();
+      }
+      onFormatted(formatted);
+
+      // --- Chép bộ cài lên phân vùng vừa dựng ---
+      setPhase("write");
+      const unWrite = await events.onWriteProgress(setProg);
       try {
         await api.writeIso({
           disk_number: disk.number,
           iso_path: iso.path,
           scheme,
-          label: label.trim() || "WINSETUP",
+          label: volume,
           confirm_token: token,
           unattend,
         });
-        setDone(true);
-        onDone(true);
-
-        if (cleanup && iso.managed) {
-          try {
-            await api.discardIso(iso.path);
-            setDiscarded(iso.path.split(/[\\/]/).pop() ?? iso.path);
-            onDiscarded();
-          } catch (e) {
-            // Dọn dẹp hỏng không làm hỏng chiếc USB vừa ghi, nên chỉ ghi chú
-            // lại chứ không biến cả bước thành thất bại.
-            setDiscarded(null);
-            console.warn("không dọn được file ISO:", errorText(e));
-          }
-        }
       } finally {
-        un();
+        unWrite();
+      }
+      setDone(true);
+      onDone(true);
+
+      if (cleanup && iso.managed) {
+        try {
+          await api.discardIso(iso.path);
+          setDiscarded(iso.path.split(/[\\/]/).pop() ?? iso.path);
+          onDiscarded();
+        } catch (e) {
+          // Dọn dẹp hỏng không làm hỏng chiếc USB vừa ghi, nên chỉ ghi chú
+          // lại chứ không biến cả bước thành thất bại.
+          setDiscarded(null);
+          console.warn("không dọn được file ISO:", errorText(e));
+        }
       }
     } catch (e) {
       setError(errorText(e));
     } finally {
-      setRunning(false);
+      setPhase(null);
     }
   }
 
@@ -166,42 +243,69 @@ export function StepWrite({
       <>
         <div className="main__head"><h1>Ghi bộ cài</h1></div>
         <Note type="warn" icon="!">
-          Cần chọn xong cả ổ USB lẫn file ISO thì mới ghi được. Hãy quay lại các bước trước.
+          Cần chọn xong cả ổ USB lẫn file ISO. Hãy quay lại các bước trước.
         </Note>
       </>
     );
   }
 
-  if (!format) {
-    return (
-      <>
-        <div className="main__head"><h1>Ghi bộ cài</h1></div>
-        <Note type="warn" icon="!" title="Chưa format ổ USB">
-          Hãy quay lại bước Format và chạy xong bước đó trước. Ghi bộ cài lên một ổ chưa được
-          chia lại phân vùng thì máy sẽ không khởi động được từ USB.
-        </Note>
-      </>
-    );
-  }
+  // Chặng đang chạy tính trên cả tám chặng của hai giai đoạn, để thanh tiến
+  // trình không nhảy về 1/6 giữa chừng như thể vừa bắt đầu lại từ đầu.
+  const stageIndex =
+    (phase === "write" ? FORMAT_STAGES : 0) + (prog?.stage_index ?? 1);
 
   return (
     <>
       <div className="main__head">
-        <h1>Ghi bộ cài</h1>
-        <p>Chép bộ cài lên ổ {format.drive_letter}: đã format. Mất khoảng 5–20 phút tuỳ tốc độ USB.</p>
+        <h1>Xoá ổ và ghi bộ cài</h1>
       </div>
       <div ref={progRef} />
-      {(running || prog) && !done && (
-        <Panel title={`Bước ${prog?.stage_index ?? 1}/${prog?.total_stages ?? 6} · ${STAGE_NAME[prog?.stage ?? "check"] ?? ""}`}>
+
+      {running && (
+        <Panel title={`Chặng ${stageIndex}/${ALL_STAGES} · ${STAGE_NAME[prog?.stage ?? "check"] ?? ""}`}>
           <Progress
             value={prog?.percent ?? 0}
             left={prog?.message ?? "Đang bắt đầu…"}
             right={prog ? rateLine(prog) : pct(0)}
             file={prog?.detail ?? null}
-            busy={running && (prog?.percent ?? 0) === 0}
+            busy={(prog?.percent ?? 0) === 0}
           />
         </Panel>
       )}
+
+      {!admin && (
+        <Note type="warn" icon="🔑">
+          Chia lại phân vùng và ghi ra USB đòi hỏi quyền Administrator.
+          <div className="actions">
+            <button className="btn btn--sm btn--primary" onClick={onAdminRelaunch}>
+              Mở lại với quyền quản trị
+            </button>
+          </div>
+        </Note>
+      )}
+
+      <Panel title="Sẽ ghi">
+        <div className="grid grid--3">
+          <div className="stat">
+            <div className="stat__k">Ổ đích</div>
+            <div className="stat__v" style={{ fontSize: 15 }}>{disk.model}</div>
+            <div className="stat__note">Ổ đĩa {disk.number} · {bytes(disk.size, 0)}</div>
+          </div>
+          <div className="stat">
+            <div className="stat__k">Bộ cài</div>
+            <div className="stat__v" style={{ fontSize: 13 }}>{iso.path.split(/[\\/]/).pop()}</div>
+            <div className="stat__note">{bytes(iso.size)}</div>
+          </div>
+          <div className="stat">
+            <div className="stat__k">Phân vùng</div>
+            <div className="stat__v" style={{ fontSize: 15 }}>{schemeTitle}</div>
+            <div className="stat__note">
+              {volumeName(label)}
+              {iso.needs_split && scheme !== "mbr_ntfs" && " · tách install.wim"}
+            </div>
+          </div>
+        </div>
+      </Panel>
 
       <Panel title="Cài đặt tự động sau khi khởi động máy">
         <Toggle
@@ -209,7 +313,7 @@ export function StepWrite({
           disabled={running}
           onChange={(v) => set("enabled", v)}
           title="Bỏ qua các màn hình hỏi đáp ban đầu"
-          desc="Ghi thêm file autounattend.xml vào gốc USB. Windows Setup tự đọc file này và trả lời sẵn phần vùng, bàn phím, mạng, giấy phép, quyền riêng tư — thường tiết kiệm 5 đến 10 phút bấm chuột."
+          desc="Trả lời sẵn phân vùng, bàn phím, mạng, giấy phép và quyền riêng tư — tiết kiệm 5–10 phút bấm chuột."
         />
 
         {unattend.enabled && (
@@ -261,7 +365,7 @@ export function StepWrite({
                 disabled={running}
                 onChange={(v) => set("local_account", v ? { name: "User", password: "", auto_logon: false } : null)}
                 title="Tạo sẵn tài khoản cục bộ"
-                desc="Bỏ qua yêu cầu đăng nhập tài khoản Microsoft. Không có mục này thì Windows 11 sẽ bắt kết nối mạng và đăng nhập trước khi vào được máy."
+                desc="Không có mục này thì Windows 11 bắt nối mạng và đăng nhập tài khoản Microsoft trước khi vào được máy."
               />
             </div>
 
@@ -293,21 +397,22 @@ export function StepWrite({
                 disabled={running}
                 onChange={(v) => set("bypass_requirements", v)}
                 title="Bỏ qua kiểm tra TPM, Secure Boot và RAM"
-                desc="Chỉ bật khi máy đích không đủ điều kiện Windows 11. Máy vẫn cài và chạy được, nhưng Microsoft không cam kết tiếp tục cấp bản cập nhật cho cấu hình này."
+                desc="Chỉ bật khi máy đích không đủ điều kiện Windows 11."
               />
             </div>
 
             {unattend.bypass_requirements && (
               <div style={{ marginTop: 12 }}>
                 <Note type="warn" icon="!">
-                  Hãy cân nhắc Windows 10 IoT Enterprise LTSC 2021 ở bước gợi ý trước khi chọn
-                  cách này — bản đó còn nhận bản vá bảo mật chính thức tới tháng 1/2032.
+                  Máy vẫn chạy được, nhưng Microsoft không cam kết tiếp tục cấp bản cập nhật cho
+                  cấu hình này. Hãy cân nhắc Windows 10 IoT Enterprise LTSC 2021 ở bước trước —
+                  bản đó còn nhận bản vá bảo mật tới tháng 1/2032.
                 </Note>
               </div>
             )}
 
             <div className="actions">
-              <button className="btn btn--sm" disabled={running}
+              <button className="btn btn--sm btn--ghost" disabled={running}
                       onClick={async () => {
                         setPreview(preview ? null : (await api.previewUnattend(unattend)) ?? "");
                       }}>
@@ -327,68 +432,101 @@ export function StepWrite({
         )}
       </Panel>
 
+      <Fold title="Kiểu phân vùng và tên ổ" hint={`${schemeTitle} · ${volumeName(label)}`}>
+        <div className="grid">
+          {SCHEMES.map((s) => (
+            <button key={s.id} className="opt" aria-pressed={scheme === s.id}
+                    onClick={() => onScheme(s.id)} disabled={running}>
+              <span className="opt__radio" />
+              <span>
+                <span className="opt__title">{s.title}</span>
+                <span className="opt__desc">{s.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {iso && !iso.bootable_uefi && (
+          <div style={{ marginTop: 12 }}>
+            <Note type="warn" icon="!">
+              File ISO này không có thư mục EFI nên chỉ boot được ở chế độ BIOS cũ.
+            </Note>
+          </div>
+        )}
+
+        <div className="actions">
+          <label style={{ fontSize: 12.5, color: "var(--text-dim)" }}>Tên ổ sau khi format</label>
+          <input
+            value={label}
+            maxLength={11}
+            disabled={running}
+            onChange={(e) => onLabel(e.target.value.toUpperCase())}
+            style={{
+              font: "inherit", fontSize: 13, padding: "7px 11px", borderRadius: 9,
+              border: "1px solid var(--border-hi)", background: "var(--glass-lo)",
+              color: "var(--text)", width: 150, userSelect: "text",
+            }}
+          />
+        </div>
+      </Fold>
+
       {iso.managed && (
-        <Panel title="Sau khi ghi xong">
-          <label style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
+        <Fold title="Xoá file ISO sau khi ghi xong" hint={cleanup ? `Có · giải phóng ${bytes(iso.size)}` : "Không"}>
+          <label style={{ display: "flex", gap: 9, alignItems: "center", cursor: "pointer" }}>
             <input type="checkbox" checked={cleanup} disabled={running}
                    onChange={(e) => setCleanup(e.target.checked)}
-                   style={{ width: 16, height: 16, marginTop: 2, accentColor: "var(--accent)" }} />
-            <span>
-              <span style={{ fontWeight: 600, fontSize: 13.5, display: "block" }}>
-                Xoá file ISO sau khi ghi xong
-              </span>
-              <span style={{ fontSize: 12.2, color: "var(--text-dim)", display: "block", marginTop: 2 }}>
-                File {bytes(iso.size)} này do ứng dụng tự tải về, ghi xong là không cần nữa.
-                Tắt tuỳ chọn nếu bạn muốn giữ lại để ghi thêm USB khác — hoặc để dùng chức
-                năng đối chiếu từng byte ở bước Kiểm tra, vì việc đó cần chính file này.
-              </span>
-            </span>
+                   style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
+            <span style={{ fontSize: 13 }}>Xoá file ISO ứng dụng đã tải, sau khi ghi xong</span>
           </label>
-        </Panel>
+          <Why>
+            Giữ lại thì ghi thêm chiếc USB nữa không phải tải lại, và bước cuối mới đối chiếu
+            được từng byte trên USB với bản gốc — việc đó cần chính file này.
+          </Why>
+        </Fold>
       )}
 
-      <Panel title="Sẽ ghi">
-        <div className="grid grid--3">
-          <div className="stat">
-            <div className="stat__k">Ổ đích</div>
-            <div className="stat__v">{format.drive_letter}: · {format.filesystem}</div>
-            <div className="stat__note">{disk.model}</div>
-          </div>
-          <div className="stat">
-            <div className="stat__k">Bộ cài</div>
-            <div className="stat__v" style={{ fontSize: 13 }}>{iso.path.split(/[\\/]/).pop()}</div>
-            <div className="stat__note">{bytes(iso.size)}</div>
-          </div>
-          <div className="stat">
-            <div className="stat__k">Tách install.wim</div>
-            <div className="stat__v">{iso.needs_split && scheme !== "mbr_ntfs" ? "Có" : "Không cần"}</div>
-            <div className="stat__note">{bytes(iso.install_image_size)}</div>
-          </div>
-        </div>
-      </Panel>
+      <Note type="danger" icon="⚠">
+        Ổ <b style={{ display: "inline" }}>{disk.model}</b> ({bytes(disk.size, 0)}) sẽ bị xoá
+        toàn bộ và không khôi phục được.
+        <label style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 11, cursor: "pointer" }}>
+          <input type="checkbox" checked={confirmed} disabled={running}
+                 onChange={(e) => setConfirmed(e.target.checked)}
+                 style={{ width: 16, height: 16, accentColor: "var(--danger)" }} />
+          <span>Tôi đã sao lưu và xác nhận đúng ổ này.</span>
+        </label>
+      </Note>
 
-      {error && <Note type="danger" icon="✕" title="Ghi USB thất bại">{error}</Note>}
+      {error && <Note type="danger" icon="✕" title="Không ghi được">{error}</Note>}
 
       {discarded && (
-        <Note type="info" icon="🧹" title="Đã dọn file ISO">
-          Đã xoá <b style={{ display: "inline" }}>{discarded}</b> để không chiếm dung lượng ổ đĩa.
+        <Note type="info" icon="🧹">
+          Đã dọn file <b style={{ display: "inline" }}>{discarded}</b>.
         </Note>
       )}
 
       {done && (
         <Note type="ok" icon="✓" title="USB đã sẵn sàng">
-          Cắm USB vào máy cần cài, vào menu boot (thường là F12, F9 hoặc Esc tuỳ hãng) và chọn
-          thiết bị USB để bắt đầu.
-          {unattend.enabled && " Các màn hình hỏi đáp ban đầu sẽ được trả lời tự động."}
+          Cắm vào máy cần cài, vào menu boot (thường là F12, F9 hoặc Esc) rồi chọn thiết bị USB.
         </Note>
       )}
 
       <div className="actions">
-        <button className="btn btn--primary" onClick={start} disabled={running}>
+        <button className="btn btn--danger" onClick={start}
+                disabled={!admin || !confirmed || running}>
           {running && <span className="spinner" />}
-          {running ? "Đang ghi…" : done ? "Ghi lại lần nữa" : "Bắt đầu ghi bộ cài"}
+          {phase === "format" ? "Đang xoá ổ…"
+            : phase === "write" ? "Đang ghi…"
+            : done ? "Làm lại lần nữa" : "Xoá ổ và ghi bộ cài"}
         </button>
+        {!confirmed && admin && !running && (
+          <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Hãy tick vào ô xác nhận ở trên.</span>
+        )}
       </div>
     </>
   );
+}
+
+/** Tên ổ rỗng thì backend tự đặt WINSETUP — giao diện nói đúng thứ sẽ xảy ra. */
+function volumeName(label: string): string {
+  return label.trim() || "WINSETUP";
 }

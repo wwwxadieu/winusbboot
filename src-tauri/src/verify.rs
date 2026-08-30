@@ -247,7 +247,7 @@ pub fn evaluate_windows(s: &WindowsUsbSnapshot, expect_unattend: bool) -> BootRe
             "Ổ MBR phải có phân vùng active thì BIOS mới nạp mã khởi động",
             if s.is_active { CheckLevel::Pass } else { CheckLevel::Fail },
             (!s.is_active).then_some(
-                "Chạy lại bước Format. BIOS đời cũ bỏ qua ổ MBR không có phân vùng active."
+                "Hãy ghi lại. BIOS đời cũ bỏ qua ổ MBR không có phân vùng active."
             ),
             true,
         ));
