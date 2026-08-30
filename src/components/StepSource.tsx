@@ -20,7 +20,13 @@ export interface SourcePlan {
   /** `null` nghĩa là bản này chỉ tải thủ công được. */
   resolve:
     | null
-    | (() => Promise<{ url: string; filename: string; sha256: string | null }>);
+    | (() => Promise<{
+        url: string;
+        filename: string;
+        sha256: string | null;
+        /** Bản Microsoft đang phát hành, khi nó mới hơn bản đã chọn. */
+        servedVersion: string | null;
+      }>);
   /** Vì sao chỉ tải thủ công được. */
   manualNote: string | null;
 }
@@ -47,6 +53,9 @@ export function StepSource({
   const [verify, setVerify] = useState<Verify>({ state: "idle" });
   // Mã băm chính thức lấy được lúc tải; giữ lại để đối chiếu sau khi tải xong.
   const [expected, setExpected] = useState<string | null>(null);
+  // Microsoft đã ra bản mới hơn bản đang chọn. Không phải lỗi — nhưng đưa cho
+  // người dùng một file mang tên bản khác rồi im lặng thì mới là lỗi.
+  const [served, setServed] = useState<string | null>(null);
 
   async function pickFile() {
     setError(null);
@@ -61,6 +70,7 @@ export function StepSource({
       onIso(await api.inspectIso(picked));
       // File tự chọn thì không có mã băm chính thức nào để đối chiếu.
       setExpected(null);
+      setServed(null);
       setVerify({ state: "idle" });
     } catch (e) {
       setError(errorText(e));
@@ -76,6 +86,7 @@ export function StepSource({
     setBusy("download");
     try {
       const target = await plan.resolve();
+      setServed(target.servedVersion);
 
       // Không bắt chọn thư mục nữa: ứng dụng tự tải vào thư mục riêng của nó,
       // và chính vì file nằm ở đó nên bước ghi mới dọn dẹp được nó sau này.
@@ -135,6 +146,13 @@ export function StepSource({
       </div>
 
       {plan?.manualNote && <Note type="warn" icon="◈">{plan.manualNote}</Note>}
+
+      {served && (
+        <Note type="info" icon="◈" title={`Microsoft đang phát hành bản ${served}`}>
+          File tải về là bản {served}, mới hơn bản bạn chọn ở bước trước. Danh mục phiên bản
+          trong máy chưa có bản này — bấm "Đồng bộ lại" ở bước Phiên bản để cập nhật.
+        </Note>
+      )}
 
       {error && <Note type="danger" icon="✕" title="Không hoàn tất được">{error}</Note>}
 

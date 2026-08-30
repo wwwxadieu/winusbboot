@@ -327,7 +327,7 @@ export default function App() {
         resolve: distro.checksum_url
           ? async () => {
               const r = await api.resolveDistroIso(distro.id);
-              return { url: r.url, filename: r.filename, sha256: r.sha256 };
+              return { url: r.url, filename: r.filename, sha256: r.sha256, servedVersion: null };
             }
           : null,
         manualNote: distro.checksum_url
@@ -351,7 +351,12 @@ export default function App() {
       officialPage: () => api.officialDownloadPage(release.id),
       resolve: async () => {
         const r = await api.resolveWindowsIso(release.id, language);
-        return { url: r.url, filename: r.filename, sha256: r.sha256 };
+        return {
+          url: r.url,
+          filename: r.filename,
+          sha256: r.sha256,
+          servedVersion: r.served_version,
+        };
       },
       manualNote: null,
     };

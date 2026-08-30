@@ -240,6 +240,13 @@ pub struct ResolvedIso {
     /// của họ. Giao diện vì thế chỉ hiện mã băm tính được chứ không nói là
     /// "khớp" hay "không khớp" — không có gì để so thì đừng vờ như có.
     pub sha256: Option<String>,
+    /// Bản Microsoft thật sự phát hành, nếu nó **mới hơn** bản người dùng chọn.
+    ///
+    /// `None` nghĩa là hai bên khớp nhau và không có gì phải nói. Có giá trị
+    /// nghĩa là danh mục trong máy đã cũ hơn trang tải — file tải về vẫn dùng
+    /// được, thậm chí là bản mới nhất, nhưng giao diện phải nói ra chứ không
+    /// đưa cho người dùng một file mang tên khác rồi im lặng.
+    pub served_version: Option<String>,
 }
 
 /// Tách một dòng trong file mã băm thành `(mã băm, tên file)`.
@@ -326,6 +333,9 @@ pub async fn resolve_distro_iso(checksum_url: &str, want: &str) -> Result<Resolv
         url: format!("{dir}/{filename}"),
         filename,
         sha256: Some(sha256),
+        // Luồng Linux tra thẳng tên file trong danh sách mã băm của chính bản
+        // đã chọn, nên không có chuyện lệch phiên bản để mà phải nói.
+        served_version: None,
     })
 }
 
@@ -361,6 +371,11 @@ pub struct Sku {
     pub language: String,
     #[serde(rename = "LocalizedLanguage", default)]
     pub localized_language: String,
+    /// Tên bản Microsoft *đang* phục vụ, vd "Windows 11 25H2__V2". Trang tải
+    /// chỉ có đúng một mục "multi-edition ISO" và mục đó trỏ tới bản hiện hành
+    /// — không có tham số nào để đòi một bản cũ hơn hay mới hơn.
+    #[serde(rename = "ProductDisplayName", default)]
+    pub product_display_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -508,6 +523,43 @@ async fn clear_bot_check(http: &reqwest::Client, session: &str) -> BotCheck {
         .is_ok();
 
     if whitelisted && answered { BotCheck::Passed } else { BotCheck::Failed }
+}
+
+/// Mã phiên bản mới nhất mà danh mục đang biết, trong cùng dòng sản phẩm.
+///
+/// Chỉ xét bản tải công khai được: bản doanh nghiệp không nằm trên trang tải
+/// nên đưa vào so sánh chỉ làm lệch kết quả.
+fn newest_known_version(release_id: &str) -> Option<String> {
+    let family = if release_id.starts_with("win10") { "win10" } else { "win11" };
+    crate::catalog::snapshot()
+        .releases
+        .iter()
+        .filter(|r| {
+            r.id.starts_with(family) && r.source == crate::catalog::SourceKind::MicrosoftConsumer
+        })
+        .filter_map(|r| version_code(&r.id))
+        .max()
+}
+
+/// Bóc mã phiên bản kiểu `25H2` khỏi một chuỗi bất kỳ.
+///
+/// Dùng cho cả hai đầu của phép đối chiếu: mã bản người dùng chọn
+/// (`win11-25h2`) và tên bản Microsoft trả về (`Windows 11 25H2__V2`).
+pub fn version_code(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    for i in 0..b.len().saturating_sub(3) {
+        let (d1, d2, h, d3) = (b[i], b[i + 1], b[i + 2], b[i + 3]);
+        let boundary = i == 0 || !b[i - 1].is_ascii_alphanumeric();
+        if boundary
+            && d1.is_ascii_digit()
+            && d2.is_ascii_digit()
+            && h.eq_ignore_ascii_case(&b'h')
+            && d3.is_ascii_digit()
+        {
+            return Some(String::from_utf8_lossy(&b[i..i + 4]).to_uppercase());
+        }
+    }
+    None
 }
 
 /// Chọn SKU đúng ngôn ngữ.
@@ -690,6 +742,39 @@ async fn resolve_once(
         )
     })?;
 
+    // Trang tải chỉ phục vụ đúng bản hiện hành. Người dùng chọn 24H2 mà
+    // Microsoft đang phát 25H2 thì im lặng tải về bản khác là dối: file tải
+    // xong mang tên bản khác, USB ghi ra cài bản khác, và không có chỗ nào nói
+    // ra điều đó. Chiều ngược lại cũng vậy — tới lúc 26H2 lên trang, người còn
+    // chọn 25H2 phải được biết là bản đó không lấy tự động được nữa.
+    let mut served_version = None;
+    if let (Some(want), Some(serving)) = (
+        version_code(release_id),
+        version_code(&sku.product_display_name),
+    ) {
+        if want != serving {
+            // Mã phiên bản dạng NNHN nên so chuỗi cũng là so thời gian:
+            // "25H2" < "26H2". Người dùng chọn đúng bản mới nhất mà ứng dụng
+            // biết, còn Microsoft đã phát bản mới hơn — nghĩa là danh mục trong
+            // máy cũ, không phải người dùng chọn nhầm. Chặn ở đây thì họ không
+            // còn đường nào lấy bản mới nhất; nhận link và nói rõ mới đúng.
+            let catalog_is_stale =
+                newest_known_version(release_id).is_some_and(|n| n == want) && serving > want;
+            if catalog_is_stale {
+                served_version = Some(serving);
+            } else {
+                return Err(AppError::new(
+                    "ms_version_mismatch",
+                    format!(
+                        "Microsoft chỉ phát hành ISO của bản {serving} trên trang tải, không có \
+                         {want}. Hãy chọn {serving} ở bước Phiên bản, hoặc bấm \"Mở trang tải \
+                         chính thức\" để tự tìm bản {want}."
+                    ),
+                ));
+            }
+        }
+    }
+
     let links_url = format!(
         "{CONNECTOR}/GetProductDownloadLinksBySku?profile={PROFILE}\
          &ProductEditionId=undefined&SKU={}&friendlyFileName=undefined\
@@ -727,6 +812,7 @@ async fn resolve_once(
         url: link.uri.clone(),
         // Microsoft không công bố mã băm cho ISO tải qua luồng này.
         sha256: None,
+        served_version,
     })
 }
 
@@ -791,6 +877,70 @@ mod microsoft_tests {
             kind: 9,
         }];
         assert_eq!(explain(&banned, BotCheck::Failed).unwrap().code, "ms_ip_blocked");
+    }
+
+    #[test]
+    fn a_version_code_is_read_from_both_ends_of_the_comparison() {
+        assert_eq!(version_code("win11-25h2").as_deref(), Some("25H2"));
+        assert_eq!(version_code("Windows 11 25H2__V2").as_deref(), Some("25H2"));
+        assert_eq!(version_code("win11-26h2").as_deref(), Some("26H2"));
+        // LTSC không mang mã dạng này, và cũng không lấy ISO tự động được —
+        // `None` để phép đối chiếu tự bỏ qua thay vì đoán bừa rồi chặn nhầm.
+        assert_eq!(version_code("win11-ltsc-2024"), None);
+        assert_eq!(version_code("win10-22h2").as_deref(), Some("22H2"));
+        // Không được nhặt bừa bốn ký tự nằm giữa một từ dài hơn.
+        assert_eq!(version_code("abc12h3def"), None);
+    }
+
+    /// Khi 26H2 lên trang tải, đây là điều kiện quyết định app cư xử đúng:
+    /// SKU của Microsoft mang tên bản họ đang phục vụ, và app đối chiếu nó với
+    /// bản người dùng chọn.
+    #[test]
+    fn the_sku_carries_the_version_microsoft_is_actually_serving() {
+        let future = r#"{"Skus":[{"Id":"21000","Language":"English",
+          "LocalizedLanguage":"English (United States)",
+          "ProductDisplayName":"Windows 11 26H2__V1"}]}"#;
+        let skus: SkuResponse = serde_json::from_str(future).unwrap();
+        let sku = pick_sku(&skus.skus, "English").unwrap();
+        assert_eq!(version_code(&sku.product_display_name).as_deref(), Some("26H2"));
+        // Chọn 26H2 thì khớp; chọn 25H2 thì không, và chỗ gọi phải từ chối chứ
+        // không lặng lẽ tải về bản khác.
+        assert_eq!(version_code("win11-26h2"), version_code(&sku.product_display_name));
+        assert_ne!(version_code("win11-25h2"), version_code(&sku.product_display_name));
+    }
+
+    /// Ranh giới quyết định app chặn hay nhận: bản người dùng chọn có phải bản
+    /// mới nhất ứng dụng biết không.
+    ///
+    /// Chọn bản cũ hơn thì đó là ý người dùng, và đưa họ bản khác là dối. Chọn
+    /// đúng bản mới nhất mà Microsoft đã phát bản mới hơn nữa thì lỗi nằm ở
+    /// danh mục trong máy — chặn lúc đó là khoá luôn đường lấy bản mới nhất.
+    /// Nối trọn đường đi của một bản chưa tồn tại lúc viết mã: danh mục phát
+    /// hiện ra `win11-26h2`, và bước tải phải tự đi tiếp được với nó — không
+    /// cần ai sửa mã nguồn, vì mọi chỗ đều suy từ mã bản chứ không ghi cứng.
+    #[test]
+    fn a_release_discovered_in_the_future_needs_no_code_change_to_download() {
+        assert_eq!(official_page("win11-26h2"), official_page("win11-25h2"));
+        assert_eq!(version_code("win11-26h2").as_deref(), Some("26H2"));
+        assert_eq!(official_page("win10-23h2"), official_page("win10-22h2"));
+    }
+
+    #[test]
+    fn the_newest_known_version_comes_only_from_publicly_downloadable_releases() {
+        // Bảng nhúng: 25H2 là bản tải công khai mới nhất của Windows 11. LTSC
+        // 2024 mới hơn về mốc hỗ trợ nhưng chỉ có qua kênh doanh nghiệp, và nó
+        // cũng không mang mã dạng NNHN nên không được lọt vào phép so.
+        assert_eq!(newest_known_version("win11-25h2").as_deref(), Some("25H2"));
+        assert_eq!(newest_known_version("win10-22h2").as_deref(), Some("22H2"));
+    }
+
+    /// So chuỗi trên mã dạng NNHN cũng chính là so thời gian — điều kiện để
+    /// phân biệt "bản mới hơn" với "bản cũ hơn" mà không cần bảng tra.
+    #[test]
+    fn version_codes_sort_chronologically_as_plain_strings() {
+        let mut v = ["26H2", "24H2", "25H1", "25H2"];
+        v.sort_unstable();
+        assert_eq!(v, ["24H2", "25H1", "25H2", "26H2"]);
     }
 
     #[test]
@@ -1082,6 +1232,20 @@ mod live_probe {
     /// ```text
     /// cargo test --manifest-path src-tauri/Cargo.toml live_probe -- --ignored --nocapture
     /// ```
+    /// Chọn một bản Microsoft không còn phát hành thì phải bị từ chối rõ ràng,
+    /// chứ không phải lặng lẽ nhận về ISO của bản khác.
+    #[tokio::test]
+    #[ignore = "gọi mạng thật"]
+    async fn asking_for_a_version_microsoft_no_longer_serves_is_refused() {
+        match resolve_windows_iso("win11-24h2", "English").await {
+            Ok(iso) => panic!("lẽ ra phải từ chối, nhưng nhận được {}", iso.filename),
+            Err(e) => {
+                println!("[{}] {}", e.code, e.message);
+                assert_eq!(e.code, "ms_version_mismatch");
+            }
+        }
+    }
+
     #[tokio::test]
     #[ignore = "gọi mạng thật"]
     async fn the_windows_flow_actually_returns_a_link() {
