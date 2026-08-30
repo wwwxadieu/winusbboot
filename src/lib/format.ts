@@ -31,3 +31,19 @@ export function shortPath(p: string, max = 52): string {
   const file = parts[parts.length - 1] ?? p;
   return file.length >= max ? `…${file.slice(-(max - 1))}` : `…\\${file}`;
 }
+
+/**
+ * Dòng bên phải thanh tiến trình khi đang ghi: tốc độ và thời gian còn lại.
+ *
+ * Trả về phần trăm khi chưa đo được tốc độ. Hiện "0 B/s" trong lúc ổ đang đẩy
+ * bộ đệm sẽ khiến người dùng tưởng máy treo, mà đó lại là lúc hay xảy ra nhất.
+ */
+export function rateLine(p: {
+  percent: number;
+  speed_bps: number;
+  eta_secs: number;
+}): string {
+  if (!p.speed_bps) return pct(p.percent);
+  const eta = p.eta_secs > 0 ? ` · còn ${duration(p.eta_secs)}` : "";
+  return `${speed(p.speed_bps)}${eta}`;
+}

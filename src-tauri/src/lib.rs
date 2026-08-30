@@ -11,6 +11,7 @@ mod error;
 mod hardware;
 mod languages;
 mod ps;
+mod rate;
 mod recommend;
 mod unattend;
 mod usb;

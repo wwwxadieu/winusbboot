@@ -660,6 +660,9 @@ where
 {
     let _ = locate(req.disk_number).await?;
 
+    // Cùng cách làm với bước ghi: chặng nào đếm được byte thì đặt số liệu vào
+    // ô nhớ này ngay trước khi gọi `emit`, chặng nào không thì để trống.
+    let tp = crate::rate::Slot::default();
     let mut emit = |pct: f64, msg: String, detail: Option<String>| {
         on_progress(writer::WriteProgress {
             stage: "readback".into(),
@@ -668,17 +671,24 @@ where
             percent: pct,
             message: msg,
             detail,
+            rate: tp.take(),
         });
     };
 
     if req.family == "linux" {
-        return readback_raw(&req, &mut emit).await;
+        return readback_raw(&req, &mut emit, &tp).await;
     }
+    // Đối chiếu theo file thì đơn vị là số file chứ không phải byte, nên không
+    // có tốc độ nào để báo.
     readback_files(&req, &mut emit).await
 }
 
 /// Luồng Linux: băm lại đúng số byte đã ghi rồi so với mã băm của file ảnh.
-async fn readback_raw<F>(req: &BootCheckRequest, emit: &mut F) -> Result<ReadbackResult>
+async fn readback_raw<F>(
+    req: &BootCheckRequest,
+    emit: &mut F,
+    tp: &crate::rate::Slot,
+) -> Result<ReadbackResult>
 where
     F: FnMut(f64, String, Option<String>) + Send,
 {
@@ -695,6 +705,7 @@ where
 
     let mut actual: Option<String> = None;
     let mut last = std::time::Instant::now();
+    let mut rate = crate::rate::Rate::new();
     ps::run_streaming(&script, |line| {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("GWU:HASH ") {
@@ -702,7 +713,9 @@ where
         } else if let Some(rest) = line.strip_prefix("GWU:READ ") {
             let done: u64 = rest.trim().parse().unwrap_or(0);
             if last.elapsed().as_millis() >= 150 {
-                last = std::time::Instant::now();
+                let now = std::time::Instant::now();
+                last = now;
+                tp.set(rate.sample(now, done, iso_size));
                 emit(
                     done as f64 / iso_size as f64 * 100.0,
                     format!("Đang đọc lại · {} / {}", human(done), human(iso_size)),

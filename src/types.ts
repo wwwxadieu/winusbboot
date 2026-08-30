@@ -253,6 +253,12 @@ export interface WriteProgress {
   percent: number;
   message: string;
   detail: string | null;
+  /** Số byte đã xong và tổng số của chặng đang chạy; 0 nếu chặng không đếm byte. */
+  done: number;
+  total: number;
+  /** `0` nghĩa là chưa đo được — giao diện ẩn phần tốc độ đi thay vì hiện "0 B/s". */
+  speed_bps: number;
+  eta_secs: number;
 }
 
 export interface DownloadProgress {

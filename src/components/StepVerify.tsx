@@ -3,7 +3,7 @@ import { api, errorText, events } from "../lib/api";
 import type {
   BootCheck, BootCheckRequest, BootReport, CheckLevel, ReadbackResult, WriteProgress,
 } from "../types";
-import { bytes, pct } from "../lib/format";
+import { bytes, pct, rateLine } from "../lib/format";
 import { Empty, Note, Panel, Progress } from "./ui";
 
 const MARK: Record<CheckLevel, string> = { pass: "✓", warn: "!", fail: "✕", skipped: "?" };
@@ -244,7 +244,7 @@ export function StepVerify({
             <Progress
               value={prog?.percent ?? 0}
               left={prog?.message ?? "Đang bắt đầu…"}
-              right={pct(prog?.percent ?? 0)}
+              right={prog ? rateLine(prog) : pct(0)}
               file={prog?.detail ?? null}
               busy={(prog?.percent ?? 0) === 0}
             />
