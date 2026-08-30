@@ -344,6 +344,15 @@ const CONNECTOR: &str = "https://www.microsoft.com/software-download-connector/a
 /// Mã hồ sơ cố định trang tải gắn vào mọi request.
 const PROFILE: &str = "606624d44113";
 
+/// Ba hằng số của luồng chống bot, đọc từ chính script trang tải của Microsoft.
+const ORG_ID: &str = "y6jn8c31";
+const OV: &str = "https://ov-df.microsoft.com";
+const OV_INSTANCE: &str = "560dc9f3-1aa5-4a2f-b63c-9e18f8d0e175";
+
+/// Trang tải công khai. Microsoft đòi header `Referer` trỏ về đây ở bước lấy
+/// link, và từ chối nếu thiếu.
+const REFERER: &str = "https://www.microsoft.com/software-download/windows11";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Sku {
     #[serde(rename = "Id")]
@@ -376,14 +385,24 @@ struct MsError {
     key: String,
     #[serde(rename = "Value", default)]
     value: String,
+    /// Microsoft phân loại lỗi bằng số này, và hai loại hay gặp có nguyên nhân
+    /// khác hẳn nhau: `9` là IP bị cấm thật, `8` là phiên chưa qua được lớp
+    /// chống bot. Gộp hai thứ đó lại là đổ lỗi cho mạng của người dùng vì một
+    /// bước mà ứng dụng quên làm.
+    #[serde(rename = "Type", default)]
+    kind: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DownloadLink {
     #[serde(rename = "Uri")]
     pub uri: String,
+    /// Kiến trúc, Microsoft gửi bằng **số**: `0` là x86, `1` là x64, `2` là
+    /// ARM64. Khai nhầm thành chuỗi thì serde vứt cả phản hồi — kể cả phản hồi
+    /// thành công có link hẳn hoi — và ứng dụng báo "dữ liệu không đọc được"
+    /// cho một lần tải lẽ ra đã xong.
     #[serde(rename = "DownloadType", default)]
-    pub download_type: String,
+    pub download_type: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,6 +431,85 @@ pub fn parse_product_edition(html: &str) -> Option<String> {
     None
 }
 
+/// Bóc hai giá trị thử thách khỏi `mdt.js`.
+///
+/// Script trả về có dạng `…&w=8DF06B0162BC353";src+="&rticks="+1788105746587;`
+/// — `w` là chuỗi hex, `rticks` là số. Đọc thẳng hai giá trị rồi tự dựng lại
+/// URL trả lời, thay vì đi theo URL nằm sẵn trong script: URL đó cũng do
+/// Microsoft gửi, nhưng dựng lại từ hằng số của mình thì không có đường nào để
+/// một phản hồi bị sửa dẫn ứng dụng đi gọi chỗ khác.
+pub fn parse_challenge(js: &str) -> Option<(String, String)> {
+    let w_at = js.find("&w=")? + 3;
+    let w: String = js[w_at..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+
+    let r_at = js.find("rticks=")? + 7;
+    let rest = js[r_at..].trim_start_matches(['"', '+', ' ']);
+    let rticks: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+
+    if w.is_empty() || rticks.is_empty() {
+        return None;
+    }
+    Some((w, rticks))
+}
+
+/// Phiên đã qua được lớp chống bot hay chưa.
+///
+/// Giữ lại kết quả này để lúc Microsoft từ chối còn nói đúng nguyên nhân, thay
+/// vì đổ tại đường mạng của người dùng.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BotCheck {
+    Passed,
+    Failed,
+}
+
+/// Đưa phiên qua lớp chống bot của Microsoft — ba request, đúng thứ tự.
+///
+/// Đây là phần trước đây thiếu, và thiếu thì mọi thứ vẫn *trông như* chạy: bước
+/// hỏi danh sách ngôn ngữ trả về đủ 38 SKU, chỉ tới bước xin link mới bị chặn
+/// bằng `ErrorSettings.SentinelReject`. Vì lỗi rơi đúng vào bước cuối nên rất
+/// dễ tưởng là Microsoft cấm IP, trong khi thật ra phiên chưa bao giờ được
+/// đăng ký xong.
+///
+/// 1. `vlscppe.microsoft.com/tags` ghi nhận session id.
+/// 2. `ov-df.microsoft.com/mdt.js` phát một thử thách nhỏ (`w` và `rticks`).
+/// 3. Gọi lại `ov-df` kèm đáp án và mốc thời gian hiện tại.
+async fn clear_bot_check(http: &reqwest::Client, session: &str) -> BotCheck {
+    let whitelisted = http
+        .get(format!(
+            "https://vlscppe.microsoft.com/tags?org_id={ORG_ID}&session_id={session}"
+        ))
+        .send()
+        .await
+        .is_ok();
+
+    let Ok(reply) = http
+        .get(format!("{OV}/mdt.js?instanceId={OV_INSTANCE}&PageId=si&session_id={session}"))
+        .send()
+        .await
+    else {
+        return BotCheck::Failed;
+    };
+    let Ok(js) = reply.text().await else { return BotCheck::Failed };
+    let Some((w, rticks)) = parse_challenge(&js) else { return BotCheck::Failed };
+
+    // Mốc thời gian script gửi đi là `Date.now()`, tính bằng mili giây.
+    let mdt = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let answered = http
+        .get(format!(
+            "{OV}/?session_id={session}&CustomerId={OV_INSTANCE}&PageId=si\
+             &w={w}&mdt={mdt}&rticks={rticks}"
+        ))
+        .send()
+        .await
+        .is_ok();
+
+    if whitelisted && answered { BotCheck::Passed } else { BotCheck::Failed }
+}
+
 /// Chọn SKU đúng ngôn ngữ.
 ///
 /// So bằng dấu bằng chứ **không** so kiểu "bắt đầu bằng": Microsoft có cả
@@ -424,14 +522,18 @@ pub fn pick_sku<'a>(skus: &'a [Sku], want: &str) -> Option<&'a Sku> {
     })
 }
 
+/// Mã kiến trúc x64 trong phản hồi của Microsoft.
+const DOWNLOAD_TYPE_X64: i32 = 1;
+
 /// Chọn link x64 trong danh sách Microsoft trả về.
+///
+/// Ưu tiên mã kiến trúc; chỉ khi không có mới đoán theo tên file, vì tên file
+/// là thứ Microsoft đổi lúc nào cũng được còn mã thì nằm trong hợp đồng dữ liệu.
 pub fn pick_link(links: &[DownloadLink]) -> Option<&DownloadLink> {
     links
         .iter()
-        .find(|l| {
-            let hay = format!("{} {}", l.uri, l.download_type).to_lowercase();
-            hay.contains("x64") || hay.contains("64-bit")
-        })
+        .find(|l| l.download_type == DOWNLOAD_TYPE_X64)
+        .or_else(|| links.iter().find(|l| l.uri.to_lowercase().contains("x64")))
         .or_else(|| links.first())
 }
 
@@ -448,19 +550,40 @@ pub fn filename_from_url(url: &str) -> String {
 }
 
 /// Diễn giải lỗi Microsoft trả về thành lời khuyên cụ thể.
-fn explain(errors: &[MsError]) -> Option<AppError> {
+///
+/// `bot` quyết định cách đọc một lỗi sentinel, và đây là chỗ dễ nói sai nhất:
+/// cùng một chữ "rejected" có thể là IP bị cấm thật, mà cũng có thể là phiên
+/// chưa qua lớp chống bot. Bảo người dùng đi tắt VPN vì một bước ứng dụng quên
+/// làm thì họ sẽ đi sửa mạng nhà mình mãi mà không bao giờ xong.
+fn explain(errors: &[MsError], bot: BotCheck) -> Option<AppError> {
     let first = errors.first()?;
     let key = first.key.to_lowercase();
-    // Đây là lỗi hay gặp nhất và cũng dễ hiểu lầm nhất: Microsoft chặn theo
-    // mạng và khu vực, không phải app hỏng hay ISO hỏng.
-    if key.contains("sentinel") {
+
+    // Loại 9 là lời từ chối theo địa chỉ IP — thứ duy nhất người dùng phải đổi
+    // đường mạng mới qua được.
+    if first.kind == 9 {
         return Some(AppError::new(
-            "ms_blocked",
-            "Microsoft từ chối cấp link tải cho kết nối mạng này. Họ chặn theo địa chỉ IP — \
-             thường gặp với VPN, mạng công ty, hoặc máy chủ. Hãy tắt VPN rồi thử lại, hoặc bấm \
-             \"Mở trang tải chính thức\" để tải bằng trình duyệt.",
+            "ms_ip_blocked",
+            "Microsoft chặn địa chỉ IP này, thường gặp với VPN, mạng công ty hoặc máy chủ. \
+             Hãy tắt VPN rồi thử lại, hoặc bấm \"Mở trang tải chính thức\" để tải bằng trình duyệt.",
         ));
     }
+
+    if key.contains("sentinel") {
+        return Some(match bot {
+            BotCheck::Failed => AppError::new(
+                "ms_botcheck_failed",
+                "Không qua được bước chống bot của Microsoft nên họ không cấp link. Hãy thử lại \
+                 sau ít phút, hoặc bấm \"Mở trang tải chính thức\" để tải bằng trình duyệt.",
+            ),
+            BotCheck::Passed => AppError::new(
+                "ms_rejected",
+                "Microsoft từ chối cấp link, đã thử lại ba lần đều vậy. Hãy thử lại sau ít phút — \
+                 hoặc bấm \"Mở trang tải chính thức\" để tải bằng trình duyệt, cách đó luôn chạy.",
+            ),
+        });
+    }
+
     Some(AppError::new(
         "ms_error",
         format!(
@@ -475,7 +598,8 @@ fn explain(errors: &[MsError]) -> Option<AppError> {
 ///
 /// Ba bước, đúng như trình duyệt làm: đọc mã product edition từ trang tải, đổi
 /// mã đó lấy danh sách SKU theo ngôn ngữ, rồi đổi SKU lấy link ký sẵn (link chỉ
-/// sống 24 giờ). Bước đăng ký phiên ở giữa chỉ để chống bot nên lỗi thì bỏ qua.
+/// sống 24 giờ). Xen giữa là lớp chống bot — xem `clear_bot_check`; thiếu nó
+/// thì bước cuối luôn bị từ chối dù hai bước đầu vẫn chạy như thường.
 pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<ResolvedIso> {
     if ms_language.trim().is_empty() {
         return Err(AppError::new(
@@ -485,8 +609,43 @@ pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<
     }
 
     let http = client()?;
+
+    // Microsoft từ chối rải rác ngay cả khi mọi thứ đúng: cùng một máy, cùng
+    // một đoạn mã, chạy năm lần thì vài lần bị chặn. Mỗi lần thử lại dùng một
+    // phiên mới — phiên đã bị từ chối thì thử lại với nó cũng vô ích. Fido cũng
+    // thử lại ở bước tương tự vì cùng lý do.
+    const ATTEMPTS: u32 = 3;
+    let mut last: Option<AppError> = None;
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        }
+        match resolve_once(&http, release_id, ms_language).await {
+            Ok(iso) => return Ok(iso),
+            // Chỉ thử lại thứ đáng thử lại. Chọn sai ngôn ngữ hay trang đổi bố
+            // cục thì thử thêm mười lần cũng vẫn thế, chỉ tổ bắt người dùng chờ.
+            Err(e) if e.code == "ms_rejected" || e.code == "ms_botcheck_failed" => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(last.unwrap_or_else(|| {
+        AppError::new("ms_error", "Không lấy được link tải từ Microsoft.")
+    }))
+}
+
+async fn resolve_once(
+    http: &reqwest::Client,
+    release_id: &str,
+    ms_language: &str,
+) -> Result<ResolvedIso> {
     let session = uuid::Uuid::new_v4().to_string();
     let page = official_page(release_id);
+
+    // Đăng ký phiên trước rồi mới đọc trang, đúng thứ tự trình duyệt làm. Đổi
+    // thứ tự hai việc này không thấy đổi kết quả — ghi ra đây vì lúc dò lỗi đã
+    // có lúc tưởng nó là nguyên nhân, trong khi thủ phạm nằm ở chỗ khác.
+    let bot = clear_bot_check(http, &session).await;
 
     let html = http.get(page).send().await?.text().await?;
     let product_id = parse_product_edition(&html).ok_or_else(|| {
@@ -496,13 +655,6 @@ pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<
              chọn file.",
         )
     })?;
-
-    let _ = http
-        .get(format!(
-            "https://vlscppe.microsoft.com/fp/tags?org_id=y6jn8c31&session_id={session}"
-        ))
-        .send()
-        .await;
 
     let sku_url = format!(
         "{CONNECTOR}/getskuinformationbyproductedition?profile={PROFILE}\
@@ -517,8 +669,8 @@ pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<
         )
     })?;
 
-    if let Some(e) = explain(&skus.errors)
-        .or_else(|| explain(&skus.validation.unwrap_or_default().errors))
+    if let Some(e) = explain(&skus.errors, bot)
+        .or_else(|| explain(&skus.validation.unwrap_or_default().errors, bot))
     {
         return Err(e);
     }
@@ -544,7 +696,14 @@ pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<
          &Locale=en-US&sessionID={session}",
         sku.id
     );
-    let links_body = http.get(links_url).send().await?.text().await?;
+    // Thiếu `Referer` là Microsoft từ chối, dù phiên đã qua lớp chống bot.
+    let links_body = http
+        .get(&links_url)
+        .header(reqwest::header::REFERER, REFERER)
+        .send()
+        .await?
+        .text()
+        .await?;
     let links: LinksResponse = serde_json::from_str(&links_body).map_err(|_| {
         AppError::new(
             "ms_bad_reply",
@@ -552,7 +711,7 @@ pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<
         )
     })?;
 
-    if let Some(e) = explain(&links.errors) {
+    if let Some(e) = explain(&links.errors, bot) {
         return Err(e);
     }
 
@@ -587,6 +746,51 @@ mod microsoft_tests {
 
     fn skus() -> Vec<Sku> {
         serde_json::from_str::<SkuResponse>(SKUS).unwrap().skus
+    }
+
+    /// Cắt từ đúng `mdt.js` Microsoft trả về, lấy ngày 30/08/2026. Giữ nguyên
+    /// hình dạng thật vì chính hình dạng đó là thứ bộ bóc tách phải chịu được.
+    const MDT_JS: &str = r#"function SendBack(url,callback){callback(url)}window.dfp={url:"https://ov-df.microsoft.com/?session_id=d6ecc287-2fc3-4bfe-9731-9cc0da842696&CustomerId=560dc9f3-1aa5-4a2f-b63c-9e18f8d0e175&PageId=si&w=8DF06B0162BC353",sessionId:"d6ecc287",dc:"useast"};window.dfp.doFpt=function(doc){var start;start=Date.now();src="https://ov-df.microsoft.com/?session_id=d6ecc287&PageId=si&w=8DF06B0162BC353";src+="&mdt="+start;src+="&rticks="+1788105746587;};"#;
+
+    #[test]
+    fn the_challenge_values_are_read_out_of_the_real_script() {
+        let (w, rticks) = parse_challenge(MDT_JS).expect("phải bóc được thử thách");
+        assert_eq!(w, "8DF06B0162BC353");
+        assert_eq!(rticks, "1788105746587");
+    }
+
+    /// Bóc trượt một trong hai giá trị thì phải trả về `None` để luồng biết là
+    /// chưa qua được lớp chống bot — dựng một URL trả lời thiếu giá trị chỉ tạo
+    /// ra một phiên hỏng mà vẫn tưởng là xong.
+    #[test]
+    fn a_script_missing_either_value_is_not_a_challenge() {
+        assert!(parse_challenge(r#"window.dfp={url:"https://x/?PageId=si"}"#).is_none());
+        assert!(parse_challenge(r#"src+="&w=";src+="&rticks="+123;"#).is_none(), "w rỗng");
+        assert!(parse_challenge(r#"src+="&w=ABC123";"#).is_none(), "thiếu rticks");
+    }
+
+    /// Lỗi loại 9 là chặn theo IP thật; lỗi sentinel khi chưa qua được lớp
+    /// chống bot thì không phải — và đó chính là lỗi người dùng gặp. Nói nhầm
+    /// hai thứ này là đẩy họ đi tắt VPN vì một bước ứng dụng quên làm.
+    #[test]
+    fn a_rejected_session_is_not_reported_as_a_banned_ip() {
+        let sentinel = vec![MsError {
+            key: "ErrorSettings.SentinelReject".into(),
+            value: "Sentinel marked this request as rejected.".into(),
+            kind: 8,
+        }];
+        assert_eq!(
+            explain(&sentinel, BotCheck::Failed).unwrap().code,
+            "ms_botcheck_failed"
+        );
+        assert_eq!(explain(&sentinel, BotCheck::Passed).unwrap().code, "ms_rejected");
+
+        let banned = vec![MsError {
+            key: "ErrorSettings.SentinelReject".into(),
+            value: "rejected".into(),
+            kind: 9,
+        }];
+        assert_eq!(explain(&banned, BotCheck::Failed).unwrap().code, "ms_ip_blocked");
     }
 
     #[test]
@@ -624,29 +828,29 @@ mod microsoft_tests {
     }
 
     #[test]
-    fn a_sentinel_rejection_is_explained_as_a_network_block() {
-        // Phản hồi thật khi gọi từ một địa chỉ IP bị Microsoft chặn. Không diễn
-        // giải thì người dùng chỉ thấy một chuỗi tiếng Anh khó hiểu và tưởng
-        // ứng dụng hỏng.
+    fn a_sentinel_rejection_is_explained_without_blaming_the_network() {
+        // Phản hồi thật, và từng bị đọc nhầm thành "Microsoft chặn IP này".
+        // Thực ra đây là câu trả lời cho một phiên chưa qua lớp chống bot: cùng
+        // một địa chỉ IP, làm đủ ba bước thì lấy được link ngay.
         let body = r#"{"Errors":[{"Key":"ErrorSettings.SentinelReject",
                        "Value":"Sentinel marked this request as rejected.","Type":8}]}"#;
         let links: LinksResponse = serde_json::from_str(body).unwrap();
-        let e = explain(&links.errors).expect("phải có lời giải thích");
-        assert_eq!(e.code, "ms_blocked");
-        assert!(e.message.contains("VPN"), "{}", e.message);
+        let e = explain(&links.errors, BotCheck::Failed).expect("phải có lời giải thích");
+        assert_eq!(e.code, "ms_botcheck_failed");
+        assert!(!e.message.contains("VPN"), "đừng đổ tại đường mạng: {}", e.message);
     }
 
     #[test]
     fn no_errors_means_no_explanation() {
         let ok: LinksResponse = serde_json::from_str(r#"{"ProductDownloadOptions":[]}"#).unwrap();
-        assert!(explain(&ok.errors).is_none());
+        assert!(explain(&ok.errors, BotCheck::Passed).is_none());
     }
 
     #[test]
     fn the_x64_link_is_chosen_over_the_arm_one() {
         let links = vec![
-            DownloadLink { uri: "https://x/Win11_arm64.iso?t=1".into(), download_type: "ARM64 Download".into() },
-            DownloadLink { uri: "https://x/Win11_x64.iso?t=2".into(), download_type: "64-bit Download".into() },
+            DownloadLink { uri: "https://x/Win11_arm64.iso?t=1".into(), download_type: 2 },
+            DownloadLink { uri: "https://x/Win11_x64.iso?t=2".into(), download_type: 1 },
         ];
         assert!(pick_link(&links).unwrap().uri.contains("x64"));
     }
@@ -869,6 +1073,28 @@ mod live_probe {
     /// ```text
     /// cargo test --manifest-path src-tauri/Cargo.toml live_probe -- --ignored --nocapture
     /// ```
+    /// Đi trọn luồng Windows với Microsoft thật, gồm cả lớp chống bot.
+    ///
+    /// Đây là thứ duy nhất bắt được lỗi kiểu "thiếu một bước chống bot": mọi
+    /// test khác đọc phản hồi đã cắt sẵn nên vẫn xanh trong khi tính năng hỏng
+    /// hoàn toàn ngoài đời.
+    ///
+    /// ```text
+    /// cargo test --manifest-path src-tauri/Cargo.toml live_probe -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "gọi mạng thật"]
+    async fn the_windows_flow_actually_returns_a_link() {
+        match resolve_windows_iso("win11-25h2", "English").await {
+            Ok(iso) => {
+                println!("OK  {} <- {}", iso.filename, &iso.url[..iso.url.len().min(90)]);
+                assert!(iso.url.starts_with("https://"), "{}", iso.url);
+                assert!(iso.filename.to_lowercase().ends_with(".iso"), "{}", iso.filename);
+            }
+            Err(e) => panic!("không lấy được link: [{}] {}", e.code, e.message),
+        }
+    }
+
     #[tokio::test]
     #[ignore = "gọi mạng thật"]
     async fn resolved_urls_are_actually_downloadable() {
