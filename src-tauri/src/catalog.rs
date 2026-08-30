@@ -175,10 +175,6 @@ pub fn replace(state: CatalogState) {
     }
 }
 
-pub fn find(id: &str) -> Option<WindowsRelease> {
-    snapshot().releases.into_iter().find(|r| r.id == id)
-}
-
 // ---------------------------------------------------------------------------
 // Ngày tháng
 //
@@ -254,10 +250,6 @@ impl WindowsRelease {
 
     pub fn end_of_support_label(&self) -> String {
         format_date(&self.end_of_support)
-    }
-
-    pub fn released_label(&self) -> String {
-        format_date(&self.released)
     }
 }
 

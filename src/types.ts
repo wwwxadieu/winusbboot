@@ -285,6 +285,9 @@ export interface DriverPackage {
   provider: string;
   version: string;
   size: number;
+  /** Gói này có driver mạng không — Rust quyết định, vì kiểu chữ trong `classes`
+   *  lấy nguyên từ file INF nên so chuỗi ở đây sẽ hụt. */
+  is_network: boolean;
 }
 
 export interface DriverSet {

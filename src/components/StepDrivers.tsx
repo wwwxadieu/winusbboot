@@ -149,9 +149,7 @@ export function StepDrivers({
   const devices = analysis ? [...analysis.devices].sort((a, b) => severity(a) - severity(b)) : [];
   const missingWifi = devices.filter((d) => d.kind === "wifi" && !d.covered_by);
   const selected = analysis?.set.packages.filter((p) => analysis.selected.includes(p.name)) ?? [];
-  const hasNetwork = selected.some((p) =>
-    p.classes.some((c) => c === "Net" || c === "Bluetooth"),
-  );
+  const hasNetwork = selected.some((p) => p.is_network);
   const fromExport = !!(source && exportDir && source.toLowerCase() === exportDir.toLowerCase());
 
   return (
