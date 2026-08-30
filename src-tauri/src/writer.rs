@@ -559,6 +559,7 @@ $img = Mount-DiskImage -ImagePath '%%ISO%%' -PassThru -ErrorAction Stop
 try {
   Start-Sleep -Milliseconds 700
   $l = ($img | Get-Volume).DriveLetter
+  if (-not $l) { throw 'Windows đã gắn file ISO nhưng không cấp ký tự ổ đĩa nào cho nó.' }
   $root = "$l`:\"
 
   $img_path = $null; $img_size = 0
@@ -575,9 +576,15 @@ try {
     } catch {}
   }
 
+  # Mỗi lệnh phải nằm trong ngoặc riêng. Viết `Test-Path $a -and ...` thì
+  # PowerShell hiểu `-and` là *tham số* của Test-Path chứ không phải toán tử,
+  # và cả lệnh chết với "A parameter cannot be found that matches parameter
+  # name 'and'". Có test quét mọi script nhúng để chặn lỗi này quay lại.
   $arch = 'x64'
+  $ia32 = Test-Path (Join-Path $root 'efi\boot\bootia32.efi')
+  $x64  = Test-Path (Join-Path $root 'efi\boot\bootx64.efi')
   if (Test-Path (Join-Path $root 'efi\boot\bootaa64.efi')) { $arch = 'arm64' }
-  elseif (Test-Path (Join-Path $root 'efi\boot\bootia32.efi') -and -not (Test-Path (Join-Path $root 'efi\boot\bootx64.efi'))) { $arch = 'x86' }
+  elseif ($ia32 -and -not $x64) { $arch = 'x86' }
 
   $uefi = Test-Path (Join-Path $root 'efi\boot')
 
@@ -610,8 +617,22 @@ Set-Disk -Number $n -IsOffline  $false -ErrorAction SilentlyContinue
 Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue |
   Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue
 
-Clear-Disk -Number $n -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
-Initialize-Disk -Number $n -PartitionStyle '%%STYLE%%' -ErrorAction Stop
+# Clear-Disk có thể từ chối khi ổ đang ở trạng thái RAW (chưa khởi tạo bao giờ,
+# hoặc vừa bị một lần ghi nguyên khối bỏ dở). Đó không phải lỗi cần dừng: mục
+# tiêu của bước này là đưa ổ về RAW, mà nó đã ở sẵn đó rồi.
+try { Clear-Disk -Number $n -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop }
+catch { if ((Get-Disk -Number $n).PartitionStyle -ne 'RAW') { throw } }
+Start-Sleep -Milliseconds 300
+
+# Initialize-Disk chỉ chạy được với ổ RAW, còn ổ đã có kiểu phân vùng thì phải
+# đổi bằng Set-Disk. Gọi thẳng Initialize như trước là hỏng ở đúng những chiếc
+# USB mà Clear-Disk không đưa được về RAW.
+$style = [string](Get-Disk -Number $n).PartitionStyle
+if ($style -eq 'RAW') {
+  Initialize-Disk -Number $n -PartitionStyle '%%STYLE%%' -ErrorAction Stop
+} elseif ($style -ne '%%STYLE%%') {
+  Set-Disk -Number $n -PartitionStyle '%%STYLE%%' -ErrorAction Stop
+}
 Start-Sleep -Milliseconds 500
 
 $maxBoot = [uint64]%%MAXBOOT%%
@@ -628,7 +649,16 @@ if ('%%STYLE%%' -eq 'MBR') {
   try { $part | Set-Partition -IsActive $true -ErrorAction Stop } catch {}
 }
 
-Start-Sleep -Milliseconds 500
+# Đối tượng New-Partition trả về là ảnh chụp *trước* lúc Windows gán ký tự ổ
+# đĩa, nên `$part.DriveLetter` ở đây thường là ký tự rỗng. Phải hỏi lại hệ thống
+# thì mới có ký tự thật — không thì mọi bước sau ghi vào một đường dẫn ":\".
+Start-Sleep -Milliseconds 800
+$part = Get-Partition -DiskNumber $n -PartitionNumber $part.PartitionNumber -ErrorAction Stop
+$letter = [string]$part.DriveLetter
+if ($letter -notmatch '^[A-Za-z]$') {
+  throw 'Windows chưa gán ký tự ổ đĩa cho phân vùng vừa tạo. Hãy rút ra cắm lại ổ USB rồi thử lại.'
+}
+
 Format-Volume -Partition $part -FileSystem '%%FS%%' -NewFileSystemLabel '%%LABEL%%' `
               -Confirm:$false -Force -ErrorAction Stop | Out-Null
 
@@ -642,7 +672,7 @@ if ($capped -and (Get-Disk -Number $n).LargestFreeExtent -gt 1GB) {
   } catch {}
 }
 
-Write-Output ([string]$part.DriveLetter)
+Write-Output $letter
 "#;
 
 const SCRIPT_COPY: &str = r#"
