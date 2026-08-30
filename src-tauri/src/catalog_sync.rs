@@ -24,9 +24,16 @@ const WIN11_URL: &str =
 const WIN10_URL: &str =
     "https://learn.microsoft.com/en-us/windows/release-health/release-information";
 
-/// Phiên bản chỉ giao cho máy mới xuất xưởng, không nâng cấp tại chỗ được và
-/// cũng không có ISO công khai — đưa vào danh mục chỉ khiến người dùng đi vào
-/// ngõ cụt.
+/// Phiên bản có trong bảng vòng đời nhưng không có ISO công khai để tải.
+///
+/// Kiểm lại ngày 30/08/2026: trang release-health liệt kê 26H1 là General
+/// Availability Channel, ra 10/02/2026, hỗ trợ tới 14/03/2028 — trông y như một
+/// bản bình thường. Nhưng trang tải cùng lúc đó vẫn chỉ phát ISO 25H2. Đưa 26H1
+/// vào danh sách chọn thì người dùng chọn xong mới biết không tải được.
+///
+/// Danh sách này **không** ảnh hưởng tới các bản tương lai: 26H2 hay bất kỳ mã
+/// nào khác đều được nhận bình thường. Chỉ khi Microsoft lại phát hành thêm một
+/// bản chỉ dành cho máy mới xuất xưởng thì mới cần thêm vào đây.
 const SKIP_VERSIONS: &[&str] = &["26H1"];
 
 /// Một dòng đọc được từ bảng.

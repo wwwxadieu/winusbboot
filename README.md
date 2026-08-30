@@ -549,6 +549,27 @@ lúc nào không báo. Ba nguyên tắc chống vỡ:
 - **Nghi ngờ thì bỏ qua.** Dòng thiếu ngày, bản chỉ dành cho máy mới xuất xưởng (26H1), hay
   bản đã quá hạn mà app chưa từng biết — đều bị loại thay vì đoán bừa.
 
+Nhờ vậy một bản chưa tồn tại lúc viết mã — 26H2, hay bất cứ mã nào sau đó — vẫn tự vào danh
+sách chọn, mang nhãn "Mới phát hiện" và yêu cầu phần cứng suy theo bản Windows 11 gần nhất
+đã biết. Bước tải cũng không cần sửa gì: trang tải và mã phiên bản đều suy từ mã bản
+(`win11-26h2` → trang Windows 11, mã `26H2`) chứ không ghi cứng ở đâu cả.
+
+**Trang tải chỉ phục vụ đúng một bản, và app phải nói ra bản nào.** Mục "multi-edition ISO"
+trên trang của Microsoft luôn trỏ tới bản hiện hành — không có tham số nào để đòi bản cũ hơn
+hay mới hơn. Trước đây app bỏ qua điều đó: chọn 24H2 thì vẫn nhận về ISO 25H2, tên file nói
+một đằng nhãn trong app nói một nẻo. Nay `ProductDisplayName` trong phản hồi của Microsoft
+("Windows 11 25H2\_\_V2") được đối chiếu với bản đã chọn, và hai chiều lệch được xử lý khác
+nhau:
+
+| Tình huống | App làm gì |
+|---|---|
+| Chọn bản cũ hơn bản Microsoft đang phát | Từ chối, nói rõ đang có bản nào và mời chọn lại |
+| Chọn đúng bản mới nhất app biết, Microsoft đã ra bản mới hơn | Nhận link, và hiện một ghi chú rằng file tải về là bản mới hơn — danh mục trong máy cũ, không phải người dùng chọn nhầm |
+
+Ranh giới giữa hai dòng đó là chỗ dễ làm sai nhất: chặn cả hai thì tới lúc 26H2 lên trang mà
+máy chưa đồng bộ được danh mục, người dùng mất luôn đường lấy bản mới nhất; nhận cả hai thì
+app lặng lẽ đưa ra một file khác thứ người ta chọn.
+
 Phiên bản mới phát hiện được đánh dấu `discovered` và hiện huy hiệu riêng, vì yêu cầu phần
 cứng của nó là suy theo bản liền trước chứ chưa được xác nhận.
 
@@ -657,7 +678,7 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 155 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+- 160 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
   `distro.rs`, `download.rs`, `drivers.rs`, `languages.rs`, `unattend.rs`, `verify.rs`,
   `writer.rs` — chạy xanh
 - Luồng tải ISO Windows chạy thật với Microsoft, lấy về link ký sẵn (`cargo test live_probe --

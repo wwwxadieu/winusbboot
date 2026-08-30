@@ -391,6 +391,8 @@ export interface ResolvedIso {
   filename: string;
   /** `null` với Windows: Microsoft không công bố mã băm trong luồng tải của họ. */
   sha256: string | null;
+  /** Bản Microsoft đang phát hành, nếu nó mới hơn bản đã chọn. `null` là khớp. */
+  served_version: string | null;
 }
 
 export interface RawWriteRequest {
