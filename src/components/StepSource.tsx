@@ -167,8 +167,9 @@ export function StepSource({
               <span>
                 <span className="opt__title">Tải tự động từ nguồn chính thức</span>
                 <span className="opt__desc">
-                  Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự
-                  đối chiếu mã băm. File lưu vào thư mục riêng của ứng dụng.
+                  {family === "linux"
+                    ? "Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự đối chiếu mã băm. File lưu vào thư mục riêng của ứng dụng."
+                    : "Hỏi Microsoft link tải đúng phiên bản và ngôn ngữ bạn đã chọn, rồi tải về thư mục riêng của ứng dụng. Link do Microsoft cấp chỉ sống 24 giờ."}
                 </span>
               </span>
             </button>
@@ -284,7 +285,9 @@ export function StepSource({
                   <div className="stat__note mono">Công bố chính thức: {verify.expected}</div>
                 ) : (
                   <div className="stat__note">
-                    Đối chiếu với giá trị nhà phát hành công bố trên trang tải để chắc chắn file không hỏng.
+                    {family === "windows"
+                      ? "Microsoft không công bố mã băm cho ISO tải qua trang của họ, nên không có gì để đối chiếu tự động. Giá trị này dùng để so với một nguồn bạn tin tưởng, hoặc để đối chiếu giữa hai lần tải."
+                      : "Đối chiếu với giá trị nhà phát hành công bố trên trang tải để chắc chắn file không hỏng."}
                   </div>
                 )}
               </div>

@@ -56,7 +56,7 @@ fn l(ms_name: &str, locale: &str, label: &str) -> SetupLanguage {
 
 /// Ngôn ngữ mặc định. Có mặt trong mọi bản phát hành và là bản dễ tìm trợ giúp
 /// nhất khi gặp lỗi.
-pub const DEFAULT: &str = "English (United States)";
+pub const DEFAULT: &str = "English";
 
 /// Toàn bộ bảng: ngôn ngữ có ISO, cộng những locale chỉ dùng cho vùng/bàn phím.
 pub fn all() -> Vec<SetupLanguage> {
@@ -70,7 +70,11 @@ pub fn all() -> Vec<SetupLanguage> {
         l("Czech", "cs-CZ", "Séc"),
         l("Danish", "da-DK", "Đan Mạch"),
         l("Dutch", "nl-NL", "Hà Lan"),
-        l("English (United States)", "en-US", "Anh (Mỹ)"),
+        // Microsoft gọi bản này đúng một chữ "English" trong API tải, không phải
+        // "English (United States)". Tên ở đây phải khớp từng ký tự với thứ API
+        // trả về, vì khâu chọn SKU so bằng dấu bằng — so kiểu "bắt đầu bằng" sẽ
+        // vớ nhầm sang "English International".
+        l("English", "en-US", "Anh (Mỹ)"),
         l("English International", "en-GB", "Anh (quốc tế)"),
         l("Estonian", "et-EE", "Estonia"),
         l("Finnish", "fi-FI", "Phần Lan"),

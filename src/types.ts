@@ -386,7 +386,8 @@ export interface DistroRecommendation {
 export interface ResolvedIso {
   url: string;
   filename: string;
-  sha256: string;
+  /** `null` với Windows: Microsoft không công bố mã băm trong luồng tải của họ. */
+  sha256: string | null;
 }
 
 export interface RawWriteRequest {

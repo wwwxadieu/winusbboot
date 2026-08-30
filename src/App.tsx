@@ -55,8 +55,8 @@ function meta(key: StepKey, family: OsFamily | null): { title: string; hint: str
   }
 }
 
-/** Ngôn ngữ hiển thị mặc định — phải là bản Microsoft thật sự phát hành. */
-const DEFAULT_LANGUAGE = "English (United States)";
+/** Ngôn ngữ hiển thị mặc định — phải khớp đúng tên Microsoft dùng trong API tải. */
+const DEFAULT_LANGUAGE = "English";
 
 const DEFAULT_UNATTEND: UnattendConfig = {
   enabled: true,
@@ -342,19 +342,24 @@ export default function App() {
       };
     }
     if (!release) return null;
-    // Windows không có đường tải tự động. Luồng cũ dựa vào endpoint
-    // /api/controls/contentinclude/html của Microsoft, và endpoint đó đã bị gỡ
-    // — trả 404 với mọi pageId, kể cả pageId lấy từ chính trang tải hiện tại.
-    // Không có gì để bật lại, nên phần bóc link đã bỏ khỏi cả backend lẫn giao
-    // diện; ở đây chỉ còn đường dẫn trang tải để mở bằng trình duyệt.
+    // Bản doanh nghiệp không nằm trên trang tải công khai, nên không có gì để
+    // hỏi Microsoft cả — chỉ còn đường lấy từ kênh bản quyền.
+    if (release.source === "volume_license") {
+      return {
+        name: release.name,
+        officialPage: () => api.officialDownloadPage(release.id),
+        resolve: null,
+        manualNote: `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`,
+      };
+    }
     return {
       name: release.name,
       officialPage: () => api.officialDownloadPage(release.id),
-      resolve: null,
-      manualNote:
-        release.source === "volume_license"
-          ? `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`
-          : `Microsoft không cho tải ISO trực tiếp từ ứng dụng ngoài, nên bộ cài Windows phải tải bằng trình duyệt. Bấm "Mở trang tải chính thức", chọn ${language}, tải file ISO về rồi quay lại đây chọn file.`,
+      resolve: async () => {
+        const r = await api.resolveWindowsIso(release.id, language);
+        return { url: r.url, filename: r.filename, sha256: r.sha256 };
+      },
+      manualNote: null,
     };
   }, [family, distro, release, language]);
 

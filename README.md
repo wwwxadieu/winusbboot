@@ -67,10 +67,10 @@ trường hợp thứ hai chỉ cần vào BIOS bật lên, không cần lách g
 TPM 2.0, ứng dụng đề xuất Windows 10 IoT Enterprise LTSC 2021: vẫn còn bản vá bảo mật
 tới 13/01/2032, an toàn hơn nhiều so với việc cài Windows 11 lách kiểm tra.
 
-**4. Nguồn bộ cài** — chọn file ISO có sẵn hoặc mở trang tải chính thức; riêng luồng Linux
-có thêm đường tải tự động từ nguồn chính thức (nối tiếp được khi đứt mạng, tự đối chiếu mã
-băm). Đọc luôn nội dung ISO: có những bản Windows nào, kiến trúc gì, install.wim nặng bao
-nhiêu. Có nút tính SHA-256 để đối chiếu.
+**4. Nguồn bộ cài** — chọn file ISO có sẵn, tải tự động từ nguồn chính thức (cả Windows lẫn
+Linux, nối tiếp được khi đứt mạng), hoặc mở trang tải trong trình duyệt. Đọc luôn nội dung ISO:
+có những bản Windows nào, kiến trúc gì, install.wim nặng bao nhiêu. Có nút tính SHA-256; riêng
+bản Linux thì đối chiếu tự động với mã băm dự án công bố.
 
 **5. Format USB** — xoá và chia lại phân vùng, tách riêng thành một bước có xác nhận của
 chính nó. Đây là thao tác duy nhất trong ứng dụng làm mất dữ liệu, nên nó không được nấp
@@ -148,19 +148,62 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
-### Windows không còn đường tải tự động
+### Luồng tải ISO Windows: hỏng, bỏ, rồi dựng lại
 
-Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link dựa vào: nó
-trả 404 với mọi `pageId`, và trang tải hiện tại cũng không còn tham chiếu tới nó. Kiểm
-chứng trên cả máy dựng lẫn máy người dùng thật, nên không phải chuyện chặn theo IP.
+Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link cũ dựa vào — nó trả
+404 với mọi `pageId`. Tính năng tải tự động cho Windows vì thế đã bị bỏ hẳn một thời gian: giữ
+lại một nút bấm chỉ dẫn tới lỗi thì tệ hơn là không có nút.
 
-Tính năng này vì thế đã bỏ hẳn, không phải chỉ tắt đi: phần bóc link (`fetch_official_links`,
-`parse_skus`, `pick_sku`) và lệnh `fetch_download_links` đều không còn, và bước Nguồn bộ cài
-của Windows chỉ dựng đúng hai lựa chọn còn dùng được — chọn file có sẵn, và mở trang tải
-chính thức. Một nút mờ đi vẫn là một lời hứa: người dùng sẽ đi tìm cách bật nó lên. Lịch sử
-git giữ lại phần mã cũ nếu sau này Microsoft dựng một luồng mới.
+Sau đó Microsoft dựng lại luồng mới ở `software-download-connector/api`, và tính năng được viết
+lại theo đúng hình dạng đó. Hình dạng này **đọc thẳng từ JavaScript của trang tải** chứ không
+đoán, nên khớp từng tham số với thứ trình duyệt thật gửi đi:
 
-Luồng Linux không dùng endpoint này nên không bị ảnh hưởng — đường tải tự động vẫn còn ở đó.
+```
+GET /software-download-connector/api/getskuinformationbyproductedition
+      ?profile=606624d44113&ProductEditionId=<mã>&SKU=undefined
+      &friendlyFileName=undefined&Locale=en-US&sessionID=<GUID>
+  → { "Skus": [ { "Id", "Language", "LocalizedLanguage" } ] }
+
+GET /software-download-connector/api/GetProductDownloadLinksBySku
+      ?profile=606624d44113&ProductEditionId=undefined&SKU=<id>
+      &friendlyFileName=undefined&Locale=en-US&sessionID=<GUID>
+  → { "ProductDownloadOptions": [ { "Uri", "DownloadType" } ] }
+```
+
+Ba chi tiết quyết định việc này chạy đúng hay chạy sai một cách âm thầm:
+
+- **Mã product edition đọc từ trang, không ghi cứng.** Mã đổi theo từng bản phát hành, ghi cứng
+  thì tới bản sau là hỏng mà không ai biết.
+- **Chọn SKU so bằng dấu bằng, không so tiền tố.** Microsoft có cả `English` lẫn
+  `English International`, nên so tiền tố sẽ đưa người chọn bản Mỹ sang bản quốc tế *mà vẫn báo
+  là đúng*. Cũng vì API gọi bản Mỹ đúng một chữ `English` nên bảng ngôn ngữ trong `languages.rs`
+  đổi theo; khâu chọn nhận thêm cả tên ở trường `LocalizedLanguage` để lần đổi tên sau không làm
+  hỏng.
+- **Không có mã băm.** Microsoft không công bố mã băm ở đâu trong luồng tải của họ, nên
+  `ResolvedIso.sha256` là `None` với Windows và giao diện chỉ hiện mã băm *tính được* chứ không
+  nói là "khớp" hay "không khớp". Không có gì để so thì đừng vờ như có.
+
+**Giới hạn thật, và người dùng cần biết trước:** Microsoft chặn bước lấy link theo địa chỉ IP.
+Gọi từ một máy chủ trung tâm dữ liệu thì bước 1 vẫn trả về đủ 38 ngôn ngữ, còn bước 2 trả về
+`{"Errors":[{"Key":"ErrorSettings.SentinelReject"}]}`. Ứng dụng diễn giải đúng lỗi đó thành lời
+khuyên cụ thể — tắt VPN, hoặc tải bằng trình duyệt — thay vì ném một chuỗi tiếng Anh khó hiểu.
+Mạng gia đình bình thường thì không vướng.
+
+### Mở app là đã có quyền quản trị
+
+Gần như mọi thứ ứng dụng này làm đều đòi quyền quản trị: chia lại phân vùng, ghi thẳng ra
+`\\.\PHYSICALDRIVE`, xuất driver khỏi kho của Windows. Mở ở quyền thường thì người dùng đi
+được năm bước rồi mới bị chặn.
+
+Nên file `.exe` nhúng manifest khai `requestedExecutionLevel level="requireAdministrator"`:
+Windows hiện hộp thoại UAC **trước khi** app khởi động, và lối tắt có khiên nhỏ. Cách còn lại —
+tự khởi động lại với quyền cao hơn — phải mở app một lần rồi tắt đi mở lại, vừa chớp nháy vừa
+dễ thành vòng lặp nếu người dùng bấm "No".
+
+Khai manifest riêng là **thay thế hẳn** manifest mặc định của `tauri-build`, nên khối
+`Microsoft.Windows.Common-Controls` phải chép lại; thiếu nó thì các hộp thoại hệ thống mất kiểu
+dáng đời mới. Đánh đổi: tài khoản chuẩn không có mật khẩu quản trị sẽ không mở được app — đúng
+đánh đổi, vì không có quyền đó thì cũng không tạo được USB.
 
 ### Tải vào thư mục riêng, ghi xong thì dọn
 
@@ -425,7 +468,7 @@ src-tauri/src/
   catalog_sync.rs  Đọc bảng vòng đời từ trang release-health của Microsoft
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
   recommend.rs  Engine chấm điểm và xếp hạng
-  download.rs   Giải link ISO Linux + tải có tiến trình, có resume, tính SHA-256
+  download.rs   Giải link ISO Windows/Linux + tải có tiến trình, có resume, tính SHA-256
   drivers.rs    Đọc file INF, lọc theo nhóm, đối chiếu mã phần cứng, chép vào USB
   writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
   verify.rs     Kiểm tra USB sau khi ghi: cấu trúc khởi động + đọc lại đối chiếu

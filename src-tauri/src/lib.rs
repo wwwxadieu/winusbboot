@@ -150,6 +150,15 @@ fn official_download_page(release_id: String) -> String {
     download::official_page(&release_id).to_string()
 }
 
+/// Hỏi Microsoft link tải ISO Windows cho ngôn ngữ đã chọn.
+#[tauri::command]
+async fn resolve_windows_iso(
+    release_id: String,
+    language: String,
+) -> Result<download::ResolvedIso> {
+    download::resolve_windows_iso(&release_id, &language).await
+}
+
 #[tauri::command]
 async fn download_iso(app: AppHandle, url: String, dest: String) -> Result<String> {
     let path = std::path::PathBuf::from(&dest);
@@ -365,6 +374,7 @@ pub fn run() {
             relaunch_as_admin,
             inspect_iso,
             official_download_page,
+            resolve_windows_iso,
             download_iso,
             hash_iso,
             iso_download_dir,

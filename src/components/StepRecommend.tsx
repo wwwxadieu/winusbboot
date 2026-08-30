@@ -115,7 +115,7 @@ export function StepRecommend({
   refreshing: boolean;
   onSeeHardware: () => void;
   languages: SetupLanguage[];
-  /** Tên Microsoft của ngôn ngữ đang chọn, vd "English (United States)". */
+  /** Tên Microsoft của ngôn ngữ đang chọn, vd "English International". */
   language: string;
   onLanguage: (ms: string) => void;
 }) {

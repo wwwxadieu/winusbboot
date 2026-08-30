@@ -17,12 +17,6 @@ pub struct DownloadProgress {
 }
 
 /// Trang tải công khai của từng dòng sản phẩm.
-///
-/// Windows chỉ còn đường tải thủ công: luồng tải tự động cũ dựa vào endpoint
-/// `/api/controls/contentinclude/html` của Microsoft, và endpoint đó đã bị gỡ
-/// (trả 404 với mọi pageId). Giữ lại một nút bấm dẫn tới lỗi thì tệ hơn là
-/// không có nút, nên phần bóc link đã bỏ hẳn — chỉ còn đường dẫn trang này để
-/// mở bằng trình duyệt.
 pub fn official_page(release_id: &str) -> &'static str {
     match release_id {
         id if id.starts_with("win10") => "https://www.microsoft.com/software-download/windows10",
@@ -241,7 +235,11 @@ pub struct ResolvedIso {
     pub url: String,
     pub filename: String,
     /// Mã băm chính thức do chính dự án công bố, để đối chiếu sau khi tải xong.
-    pub sha256: String,
+    ///
+    /// `None` với Windows: Microsoft không công bố mã băm ở đâu trong luồng tải
+    /// của họ. Giao diện vì thế chỉ hiện mã băm tính được chứ không nói là
+    /// "khớp" hay "không khớp" — không có gì để so thì đừng vờ như có.
+    pub sha256: Option<String>,
 }
 
 /// Tách một dòng trong file mã băm thành `(mã băm, tên file)`.
@@ -327,8 +325,346 @@ pub async fn resolve_distro_iso(checksum_url: &str, want: &str) -> Result<Resolv
     Ok(ResolvedIso {
         url: format!("{dir}/{filename}"),
         filename,
-        sha256,
+        sha256: Some(sha256),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Lấy link ISO Windows từ Microsoft
+// ---------------------------------------------------------------------------
+
+/// Endpoint hiện hành của trang tải Microsoft.
+///
+/// Luồng cũ dùng `/api/controls/contentinclude/html` và endpoint đó đã bị gỡ —
+/// trả 404 với mọi pageId, nên tính năng tải tự động từng bị bỏ hẳn. Microsoft
+/// đã dựng lại luồng mới ở địa chỉ này; hình dạng dưới đây đọc thẳng từ JS của
+/// trang tải nên khớp từng tham số với thứ trình duyệt thật gửi đi.
+const CONNECTOR: &str = "https://www.microsoft.com/software-download-connector/api";
+
+/// Mã hồ sơ cố định trang tải gắn vào mọi request.
+const PROFILE: &str = "606624d44113";
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Sku {
+    #[serde(rename = "Id")]
+    pub id: String,
+    #[serde(rename = "Language")]
+    pub language: String,
+    #[serde(rename = "LocalizedLanguage", default)]
+    pub localized_language: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkuResponse {
+    #[serde(rename = "Skus", default)]
+    skus: Vec<Sku>,
+    #[serde(rename = "ValidationContainer", default)]
+    validation: Option<ErrorContainer>,
+    #[serde(rename = "Errors", default)]
+    errors: Vec<MsError>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ErrorContainer {
+    #[serde(rename = "Errors", default)]
+    errors: Vec<MsError>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MsError {
+    #[serde(rename = "Key", default)]
+    key: String,
+    #[serde(rename = "Value", default)]
+    value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DownloadLink {
+    #[serde(rename = "Uri")]
+    pub uri: String,
+    #[serde(rename = "DownloadType", default)]
+    pub download_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LinksResponse {
+    #[serde(rename = "ProductDownloadOptions", default)]
+    options: Vec<DownloadLink>,
+    #[serde(rename = "Errors", default)]
+    errors: Vec<MsError>,
+}
+
+/// Bóc mã product edition từ trang tải.
+///
+/// Mã này đổi theo từng bản phát hành (bản 25H2 mang mã khác 24H2), nên đọc từ
+/// trang thay vì ghi cứng — ghi cứng thì tới bản sau là hỏng mà không ai biết.
+pub fn parse_product_edition(html: &str) -> Option<String> {
+    let mut from = 0usize;
+    while let Some(rel) = html[from..].find("<option value=\"") {
+        let start = from + rel + 15;
+        let end = html[start..].find('"')? + start;
+        let value = &html[start..end];
+        if value.len() >= 3 && value.chars().all(|c| c.is_ascii_digit()) {
+            return Some(value.to_string());
+        }
+        from = end;
+    }
+    None
+}
+
+/// Chọn SKU đúng ngôn ngữ.
+///
+/// So bằng dấu bằng chứ **không** so kiểu "bắt đầu bằng": Microsoft có cả
+/// "English" lẫn "English International", nên so tiền tố sẽ trả về bản quốc tế
+/// cho người chọn bản Mỹ. Tải sai ngôn ngữ mà vẫn báo đúng còn tệ hơn báo lỗi.
+pub fn pick_sku<'a>(skus: &'a [Sku], want: &str) -> Option<&'a Sku> {
+    let want = want.trim();
+    skus.iter().find(|s| {
+        s.language.eq_ignore_ascii_case(want) || s.localized_language.eq_ignore_ascii_case(want)
+    })
+}
+
+/// Chọn link x64 trong danh sách Microsoft trả về.
+pub fn pick_link(links: &[DownloadLink]) -> Option<&DownloadLink> {
+    links
+        .iter()
+        .find(|l| {
+            let hay = format!("{} {}", l.uri, l.download_type).to_lowercase();
+            hay.contains("x64") || hay.contains("64-bit")
+        })
+        .or_else(|| links.first())
+}
+
+/// Tên file từ một link đã ký. Link của Microsoft luôn kèm chuỗi truy vấn dài.
+pub fn filename_from_url(url: &str) -> String {
+    url.split('?')
+        .next()
+        .unwrap_or(url)
+        .rsplit('/')
+        .next()
+        .filter(|n| n.to_lowercase().ends_with(".iso"))
+        .unwrap_or("windows.iso")
+        .to_string()
+}
+
+/// Diễn giải lỗi Microsoft trả về thành lời khuyên cụ thể.
+fn explain(errors: &[MsError]) -> Option<AppError> {
+    let first = errors.first()?;
+    let key = first.key.to_lowercase();
+    // Đây là lỗi hay gặp nhất và cũng dễ hiểu lầm nhất: Microsoft chặn theo
+    // mạng và khu vực, không phải app hỏng hay ISO hỏng.
+    if key.contains("sentinel") {
+        return Some(AppError::new(
+            "ms_blocked",
+            "Microsoft từ chối cấp link tải cho kết nối mạng này. Họ chặn theo địa chỉ IP — \
+             thường gặp với VPN, mạng công ty, hoặc máy chủ. Hãy tắt VPN rồi thử lại, hoặc bấm \
+             \"Mở trang tải chính thức\" để tải bằng trình duyệt.",
+        ));
+    }
+    Some(AppError::new(
+        "ms_error",
+        format!(
+            "Microsoft từ chối yêu cầu tải ({}). Hãy tải bằng trình duyệt qua nút \"Mở trang tải \
+             chính thức\".",
+            if first.value.is_empty() { first.key.clone() } else { first.value.clone() }
+        ),
+    ))
+}
+
+/// Hỏi Microsoft link tải ISO Windows cho ngôn ngữ đã chọn.
+///
+/// Ba bước, đúng như trình duyệt làm: đọc mã product edition từ trang tải, đổi
+/// mã đó lấy danh sách SKU theo ngôn ngữ, rồi đổi SKU lấy link ký sẵn (link chỉ
+/// sống 24 giờ). Bước đăng ký phiên ở giữa chỉ để chống bot nên lỗi thì bỏ qua.
+pub async fn resolve_windows_iso(release_id: &str, ms_language: &str) -> Result<ResolvedIso> {
+    if ms_language.trim().is_empty() {
+        return Err(AppError::new(
+            "no_language",
+            "Chưa chọn ngôn ngữ bộ cài. Hãy quay lại bước Phiên bản để chọn.",
+        ));
+    }
+
+    let http = client()?;
+    let session = uuid::Uuid::new_v4().to_string();
+    let page = official_page(release_id);
+
+    let html = http.get(page).send().await?.text().await?;
+    let product_id = parse_product_edition(&html).ok_or_else(|| {
+        AppError::new(
+            "ms_layout_changed",
+            "Không tìm thấy mã sản phẩm trên trang tải của Microsoft. Hãy tải ISO thủ công rồi \
+             chọn file.",
+        )
+    })?;
+
+    let _ = http
+        .get(format!(
+            "https://vlscppe.microsoft.com/fp/tags?org_id=y6jn8c31&session_id={session}"
+        ))
+        .send()
+        .await;
+
+    let sku_url = format!(
+        "{CONNECTOR}/getskuinformationbyproductedition?profile={PROFILE}\
+         &ProductEditionId={product_id}&SKU=undefined&friendlyFileName=undefined\
+         &Locale=en-US&sessionID={session}"
+    );
+    let sku_body = http.get(sku_url).send().await?.text().await?;
+    let skus: SkuResponse = serde_json::from_str(&sku_body).map_err(|_| {
+        AppError::new(
+            "ms_bad_reply",
+            "Microsoft trả về dữ liệu không đọc được ở bước chọn ngôn ngữ. Hãy tải thủ công.",
+        )
+    })?;
+
+    if let Some(e) = explain(&skus.errors)
+        .or_else(|| explain(&skus.validation.unwrap_or_default().errors))
+    {
+        return Err(e);
+    }
+
+    let sku = pick_sku(&skus.skus, ms_language).ok_or_else(|| {
+        let available: Vec<&str> = skus.skus.iter().map(|s| s.language.as_str()).take(12).collect();
+        AppError::new(
+            "ms_no_sku",
+            if skus.skus.is_empty() {
+                "Microsoft không trả về ngôn ngữ nào. Hãy tải thủ công từ trang chính thức.".into()
+            } else {
+                format!(
+                    "Microsoft không phát hành bản {ms_language}. Những ngôn ngữ đang có: {}.",
+                    available.join(", ")
+                )
+            },
+        )
+    })?;
+
+    let links_url = format!(
+        "{CONNECTOR}/GetProductDownloadLinksBySku?profile={PROFILE}\
+         &ProductEditionId=undefined&SKU={}&friendlyFileName=undefined\
+         &Locale=en-US&sessionID={session}",
+        sku.id
+    );
+    let links_body = http.get(links_url).send().await?.text().await?;
+    let links: LinksResponse = serde_json::from_str(&links_body).map_err(|_| {
+        AppError::new(
+            "ms_bad_reply",
+            "Microsoft trả về dữ liệu không đọc được ở bước lấy link. Hãy tải thủ công.",
+        )
+    })?;
+
+    if let Some(e) = explain(&links.errors) {
+        return Err(e);
+    }
+
+    let link = pick_link(&links.options).ok_or_else(|| {
+        AppError::new(
+            "ms_no_link",
+            "Microsoft không trả về link tải nào cho bản này. Hãy tải thủ công từ trang chính thức.",
+        )
+    })?;
+
+    Ok(ResolvedIso {
+        filename: filename_from_url(&link.uri),
+        url: link.uri.clone(),
+        // Microsoft không công bố mã băm cho ISO tải qua luồng này.
+        sha256: None,
+    })
+}
+
+#[cfg(test)]
+mod microsoft_tests {
+    use super::*;
+
+    /// Cắt từ đúng phản hồi thật của Microsoft, lấy ngày 30/08/2026.
+    const SKUS: &str = r#"{"ValidationContainer":{"Errors":[]},"Skus":[
+      {"Id":"20046","Language":"English","LocalizedProductDisplayName":"Windows 11  English",
+       "LocalizedLanguage":"English (United States)","ProductDisplayName":"Windows 11 25H2__V2"},
+      {"Id":"20047","Language":"English International",
+       "LocalizedProductDisplayName":"Windows 11  English International",
+       "LocalizedLanguage":"English International","ProductDisplayName":"Windows 11 25H2__V2"},
+      {"Id":"20057","Language":"Japanese","LocalizedProductDisplayName":"Windows 11  Japanese",
+       "LocalizedLanguage":"Japanese","ProductDisplayName":"Windows 11 25H2__V2"}]}"#;
+
+    fn skus() -> Vec<Sku> {
+        serde_json::from_str::<SkuResponse>(SKUS).unwrap().skus
+    }
+
+    #[test]
+    fn the_english_sku_is_never_confused_with_english_international() {
+        // Đây là lý do khâu chọn SKU so bằng dấu bằng chứ không so tiền tố:
+        // "English" là tiền tố của "English International", nên so tiền tố sẽ
+        // đưa người chọn bản Mỹ sang bản quốc tế mà vẫn báo là đúng.
+        assert_eq!(pick_sku(&skus(), "English").unwrap().id, "20046");
+        assert_eq!(pick_sku(&skus(), "English International").unwrap().id, "20047");
+    }
+
+    #[test]
+    fn the_older_microsoft_name_still_matches_through_the_localized_field() {
+        // Microsoft gọi bản này là "English" ở trường Language nhưng
+        // "English (United States)" ở trường LocalizedLanguage. Nhận cả hai thì
+        // đổi cách đặt tên một lần nữa cũng không làm hỏng.
+        assert_eq!(pick_sku(&skus(), "English (United States)").unwrap().id, "20046");
+    }
+
+    #[test]
+    fn a_language_microsoft_does_not_publish_yields_nothing() {
+        assert!(pick_sku(&skus(), "Vietnamese").is_none());
+    }
+
+    #[test]
+    fn the_product_edition_id_is_read_from_the_download_page() {
+        let html = r#"<select id="product-edition"><option value="">Select</option>
+          <option value="3321">Windows 11 (multi-edition ISO for x64 devices)</option></select>"#;
+        assert_eq!(parse_product_edition(html).as_deref(), Some("3321"));
+    }
+
+    #[test]
+    fn a_page_without_any_edition_gives_up_instead_of_guessing() {
+        assert!(parse_product_edition("<html>bảo trì</html>").is_none());
+    }
+
+    #[test]
+    fn a_sentinel_rejection_is_explained_as_a_network_block() {
+        // Phản hồi thật khi gọi từ một địa chỉ IP bị Microsoft chặn. Không diễn
+        // giải thì người dùng chỉ thấy một chuỗi tiếng Anh khó hiểu và tưởng
+        // ứng dụng hỏng.
+        let body = r#"{"Errors":[{"Key":"ErrorSettings.SentinelReject",
+                       "Value":"Sentinel marked this request as rejected.","Type":8}]}"#;
+        let links: LinksResponse = serde_json::from_str(body).unwrap();
+        let e = explain(&links.errors).expect("phải có lời giải thích");
+        assert_eq!(e.code, "ms_blocked");
+        assert!(e.message.contains("VPN"), "{}", e.message);
+    }
+
+    #[test]
+    fn no_errors_means_no_explanation() {
+        let ok: LinksResponse = serde_json::from_str(r#"{"ProductDownloadOptions":[]}"#).unwrap();
+        assert!(explain(&ok.errors).is_none());
+    }
+
+    #[test]
+    fn the_x64_link_is_chosen_over_the_arm_one() {
+        let links = vec![
+            DownloadLink { uri: "https://x/Win11_arm64.iso?t=1".into(), download_type: "ARM64 Download".into() },
+            DownloadLink { uri: "https://x/Win11_x64.iso?t=2".into(), download_type: "64-bit Download".into() },
+        ];
+        assert!(pick_link(&links).unwrap().uri.contains("x64"));
+    }
+
+    #[test]
+    fn the_file_name_comes_from_the_signed_url_without_its_query_string() {
+        let url = "https://software.download.prss.microsoft.com/dbazure/\
+                   Win11_25H2_EnglishInternational_x64v2.iso?t=abc&P1=123&P2=456";
+        assert_eq!(filename_from_url(url), "Win11_25H2_EnglishInternational_x64v2.iso");
+    }
+
+    #[test]
+    fn a_url_that_is_not_an_iso_falls_back_to_a_safe_name() {
+        // Không bao giờ dựng tên file từ một chuỗi lạ: tên đó sẽ thành đường dẫn
+        // ghi vào thư mục của ứng dụng.
+        assert_eq!(filename_from_url("https://example.com/"), "windows.iso");
+        assert_eq!(filename_from_url("https://example.com/tai-ve.php?id=9"), "windows.iso");
+    }
 }
 
 #[cfg(test)]
