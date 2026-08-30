@@ -1,4 +1,4 @@
-//! Lấy link ISO chính thức từ Microsoft và tải về có tiến trình, có resume.
+//! Tải file ảnh đĩa có tiến trình và có nối tiếp, kèm phần giải link ISO Linux.
 
 use crate::error::{AppError, Result};
 use futures_util::StreamExt;
@@ -6,14 +6,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DownloadOption {
-    pub label: String,
-    pub url: String,
-    pub language: String,
-    pub architecture: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
@@ -25,6 +17,12 @@ pub struct DownloadProgress {
 }
 
 /// Trang tải công khai của từng dòng sản phẩm.
+///
+/// Windows chỉ còn đường tải thủ công: luồng tải tự động cũ dựa vào endpoint
+/// `/api/controls/contentinclude/html` của Microsoft, và endpoint đó đã bị gỡ
+/// (trả 404 với mọi pageId). Giữ lại một nút bấm dẫn tới lỗi thì tệ hơn là
+/// không có nút, nên phần bóc link đã bỏ hẳn — chỉ còn đường dẫn trang này để
+/// mở bằng trình duyệt.
 pub fn official_page(release_id: &str) -> &'static str {
     match release_id {
         id if id.starts_with("win10") => "https://www.microsoft.com/software-download/windows10",
@@ -35,8 +33,9 @@ pub fn official_page(release_id: &str) -> &'static str {
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                   (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-/// Client cho các request nhỏ: trang HTML, file mã băm, API SKU. Ở đây đặt hạn
-/// chót cho cả request là hợp lý — không có cái nào đáng chạy quá một phút.
+/// Client cho các request nhỏ: file mã băm, trang chỉ mục của các dự án Linux.
+/// Ở đây đặt hạn chót cho cả request là hợp lý — không cái nào đáng chạy quá
+/// một phút.
 fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(UA)
@@ -63,198 +62,6 @@ fn download_client() -> Result<reqwest::Client> {
         .read_timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(Into::into)
-}
-
-/// Trích mọi giá trị nằm giữa `open` và `close`. Đủ dùng để bóc vài thuộc tính
-/// HTML mà không phải kéo theo cả một thư viện phân tích DOM.
-fn extract_between(hay: &str, open: &str, close: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while let Some(rel) = hay[from..].find(open) {
-        let start = from + rel + open.len();
-        let Some(end_rel) = hay[start..].find(close) else { break };
-        out.push(hay[start..start + end_rel].to_string());
-        from = start + end_rel + close.len();
-    }
-    out
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Sku {
-    pub id: String,
-    pub language: String,
-}
-
-/// Bóc danh sách SKU (mỗi ngôn ngữ một SKU) từ HTML Microsoft trả về.
-///
-/// Trước đây đoạn này chỉ lấy `"id"` **đầu tiên** trong cả trang và bỏ qua hoàn
-/// toàn ngôn ngữ được yêu cầu — nghĩa là xin tiếng Nhật thì nhận về SKU nào
-/// đứng đầu danh sách, rồi được dán nhãn "Nhật". Tải sai ngôn ngữ mà vẫn báo
-/// đúng còn tệ hơn là báo lỗi, nên giờ id và ngôn ngữ luôn đi thành cặp.
-pub fn parse_skus(html: &str) -> Vec<Sku> {
-    // Microsoft nhúng JSON vào thuộc tính value của <option>, nên dấu nháy bị
-    // escape thành &quot;. Chuẩn hoá lại rồi mới bóc.
-    let flat = html.replace("&quot;", "\"");
-
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while let Some(rel) = flat[from..].find("\"id\":\"") {
-        let start = from + rel + 6;
-        let Some(end) = flat[start..].find('"') else { break };
-        let id = flat[start..start + end].to_string();
-
-        // Ngôn ngữ nằm cùng object với id; giới hạn tầm nhìn để không vớ phải
-        // trường của SKU kế tiếp.
-        let window_end = flat[start..]
-            .find("\"id\":\"")
-            .map(|n| start + n)
-            .unwrap_or(flat.len());
-        let window = &flat[start..window_end];
-
-        let language = ["\"language\":\"", "\"localizedLanguage\":\""]
-            .iter()
-            .find_map(|key| {
-                let at = window.find(key)? + key.len();
-                let stop = window[at..].find('"')?;
-                Some(window[at..at + stop].to_string())
-            })
-            .unwrap_or_default();
-
-        if !id.is_empty() && !language.is_empty() {
-            out.push(Sku { id, language });
-        }
-        from = start + end;
-    }
-    out
-}
-
-/// Chọn SKU đúng ngôn ngữ. So không phân biệt hoa thường, và chấp nhận cả tên
-/// đầy đủ lẫn tên rút gọn ("English" khớp "English (United States)").
-pub fn pick_sku(skus: &[Sku], want: &str) -> Option<String> {
-    let want = want.trim();
-    skus.iter()
-        .find(|s| s.language.eq_ignore_ascii_case(want))
-        .or_else(|| {
-            skus.iter().find(|s| {
-                s.language.to_lowercase().starts_with(&want.to_lowercase())
-            })
-        })
-        .map(|s| s.id.clone())
-}
-
-/// Hỏi Microsoft danh sách link tải ISO cho ngôn ngữ đã chọn.
-///
-/// Đây là chính luồng mà trang tải chính thức dùng: đăng ký một phiên, hỏi mã
-/// SKU theo ngôn ngữ, rồi đổi mã SKU lấy link ký sẵn (link chỉ sống 24 giờ).
-/// Microsoft có thể đổi luồng này bất cứ lúc nào, nên mọi lỗi ở đây đều được
-/// diễn giải thành lời khuyên "tải thủ công" thay vì một stack trace.
-pub async fn fetch_official_links(release_id: &str, language: &str) -> Result<Vec<DownloadOption>> {
-    let http = client()?;
-    let session = uuid::Uuid::new_v4().to_string();
-    let page = official_page(release_id);
-
-    // 1. Lấy mã product edition từ trang tải (thay vì hard-code, vì mã đổi theo
-    //    từng bản phát hành).
-    let html = http.get(page).send().await?.text().await?;
-    let product_id = extract_between(&html, "<option value=\"", "\"")
-        .into_iter()
-        .find(|v| v.chars().all(|c| c.is_ascii_digit()) && v.len() >= 3)
-        .ok_or_else(|| {
-            AppError::new(
-                "ms_layout_changed",
-                "Không tìm thấy mã sản phẩm trên trang tải của Microsoft. Hãy tải ISO thủ công rồi chọn file.",
-            )
-        })?;
-
-    // 2. Đăng ký phiên. Bỏ qua lỗi ở bước này — nó chỉ dùng để chống bot.
-    let _ = http
-        .get(format!(
-            "https://vlscppe.microsoft.com/fp/tags?org_id=y6jn8c31&session_id={session}"
-        ))
-        .send()
-        .await;
-
-    let base = "https://www.microsoft.com/en-US/api/controls/contentinclude/html\
-                ?pageId=a8f8f489-4c7f-463a-9ca6-5cff94d8d041&host=www.microsoft.com\
-                &segments=software-download,windows11&query=&sdVersion=2";
-
-    // 3. Đổi product edition + ngôn ngữ lấy mã SKU.
-    let sku_html = http
-        .get(format!(
-            "{base}&action=getskuinformationbyproductedition&sessionId={session}&productEditionId={product_id}"
-        ))
-        .send()
-        .await?
-        .text()
-        .await?;
-
-    let skus = parse_skus(&sku_html);
-    let sku_id = pick_sku(&skus, language).ok_or_else(|| {
-        // Nói rõ có những ngôn ngữ nào thay vì chỉ báo "không tìm thấy" —
-        // Microsoft đổi cách đặt tên là chuyện thường, và người dùng cần biết
-        // phải chọn lại cái gì.
-        let available: Vec<&str> = skus.iter().map(|s| s.language.as_str()).take(12).collect();
-        AppError::new(
-            "ms_no_sku",
-            if skus.is_empty() {
-                format!(
-                    "Microsoft không trả về danh sách ngôn ngữ nào. Hãy tải thủ công \
-                     bản {language} từ trang chính thức."
-                )
-            } else {
-                format!(
-                    "Microsoft không có bản {language}. Những ngôn ngữ đang có: {}.",
-                    available.join(", ")
-                )
-            },
-        )
-    })?;
-
-    // 4. Đổi mã SKU lấy link tải thật.
-    let links_html = http
-        .get(format!(
-            "{base}&action=GetProductDownloadLinksBySku&sessionId={session}&skuId={sku_id}"
-        ))
-        .send()
-        .await?
-        .text()
-        .await?;
-
-    let mut options: Vec<DownloadOption> = extract_between(&links_html, "href=\"", "\"")
-        .into_iter()
-        .filter(|u| {
-            u.starts_with("https://")
-                && (u.contains("software.download.prss.microsoft.com")
-                    || u.contains("software-download.microsoft.com")
-                    || u.to_lowercase().contains(".iso"))
-        })
-        .map(|url| {
-            let arch = if url.to_lowercase().contains("arm64") {
-                "arm64"
-            } else if url.to_lowercase().contains("x86") {
-                "x86"
-            } else {
-                "x64"
-            };
-            DownloadOption {
-                label: format!("ISO {arch} · {language}"),
-                url,
-                language: language.to_string(),
-                architecture: arch.to_string(),
-            }
-        })
-        .collect();
-
-    options.dedup_by(|a, b| a.url == b.url);
-
-    if options.is_empty() {
-        return Err(AppError::new(
-            "ms_blocked",
-            "Microsoft đã từ chối yêu cầu tải tự động (thường do chặn theo khu vực). \
-             Hãy bấm \"Mở trang tải chính thức\" để tải thủ công rồi chọn file ISO.",
-        ));
-    }
-    Ok(options)
 }
 
 // ---------------------------------------------------------------------------
@@ -655,66 +462,6 @@ mod timeout_tests {
         let body = http.get(&url).send().await.unwrap().bytes().await
             .expect("download_client() không được đặt hạn chót cho cả request");
         assert_eq!(body.len(), CHUNKS);
-    }
-}
-
-#[cfg(test)]
-mod sku_tests {
-    use super::*;
-
-    /// Dạng Microsoft thật sự trả về: JSON nhúng trong thuộc tính value của
-    /// <option>, dấu nháy bị escape thành &quot;.
-    const SKU_HTML: &str = r#"
-      <select id="product-languages">
-        <option value="">Chọn một</option>
-        <option value="{&quot;id&quot;:&quot;11111&quot;,&quot;language&quot;:&quot;Arabic&quot;,&quot;localizedLanguage&quot;:&quot;العربية&quot;}">Arabic</option>
-        <option value="{&quot;id&quot;:&quot;22222&quot;,&quot;language&quot;:&quot;English (United States)&quot;,&quot;localizedLanguage&quot;:&quot;English (United States)&quot;}">English</option>
-        <option value="{&quot;id&quot;:&quot;33333&quot;,&quot;language&quot;:&quot;Japanese&quot;,&quot;localizedLanguage&quot;:&quot;日本語&quot;}">Japanese</option>
-      </select>"#;
-
-    #[test]
-    fn every_sku_keeps_its_id_paired_with_its_language() {
-        let skus = parse_skus(SKU_HTML);
-        assert_eq!(skus.len(), 3);
-        assert_eq!(skus[0], Sku { id: "11111".into(), language: "Arabic".into() });
-        assert_eq!(skus[2], Sku { id: "33333".into(), language: "Japanese".into() });
-    }
-
-    /// Lỗi cũ: lấy `"id"` đầu tiên trong cả trang rồi bỏ qua ngôn ngữ, nên xin
-    /// tiếng Nhật lại nhận về SKU tiếng Ả Rập mà vẫn báo là tiếng Nhật.
-    #[test]
-    fn the_requested_language_decides_the_sku_not_the_page_order() {
-        let skus = parse_skus(SKU_HTML);
-        assert_eq!(pick_sku(&skus, "Japanese").as_deref(), Some("33333"));
-        assert_eq!(pick_sku(&skus, "English (United States)").as_deref(), Some("22222"));
-        assert_ne!(
-            pick_sku(&skus, "Japanese").as_deref(),
-            Some("11111"),
-            "không được rơi về SKU đứng đầu danh sách"
-        );
-    }
-
-    #[test]
-    fn matching_ignores_case_and_accepts_a_shortened_name() {
-        let skus = parse_skus(SKU_HTML);
-        assert_eq!(pick_sku(&skus, "japanese").as_deref(), Some("33333"));
-        assert_eq!(pick_sku(&skus, "English").as_deref(), Some("22222"));
-    }
-
-    /// Tiếng Việt không có trong danh sách của Microsoft. Trả về None để bên
-    /// gọi báo lỗi kèm danh sách ngôn ngữ đang có, thay vì tải nhầm bản khác.
-    #[test]
-    fn a_language_microsoft_does_not_publish_yields_nothing() {
-        let skus = parse_skus(SKU_HTML);
-        assert_eq!(pick_sku(&skus, "Vietnamese"), None);
-    }
-
-    #[test]
-    fn garbage_html_yields_no_skus_rather_than_nonsense() {
-        assert!(parse_skus("").is_empty());
-        assert!(parse_skus("<html>404 Not Found</html>").is_empty());
-        // Có id nhưng không có ngôn ngữ đi kèm thì không dùng được để chọn.
-        assert!(parse_skus(r#"{"id":"9999"}"#).is_empty());
     }
 }
 

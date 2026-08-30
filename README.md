@@ -20,6 +20,7 @@ tham số. Xem "Vì sao ISO Linux phải ghi nguyên khối" bên dưới.
 | Cài đặt tự động | `autounattend.xml` | Không có |
 | Ổ USB tối thiểu | 8 GB | Vừa đúng cỡ file ISO |
 | Kiểm tra sau khi ghi | Đối chiếu từng file với ISO | Băm lại từng byte đã ghi |
+| Kèm driver | Có, qua `$WinPEDriver$` | Không cần — driver nằm trong nhân |
 
 **1. Nhận diện USB** — một tiến trình PowerShell chạy nền suốt vòng đời ứng dụng, cứ 3 giây
 in danh sách ổ USB dưới dạng JSON. Rust đọc từng dòng và chỉ đẩy sự kiện lên giao diện khi
@@ -66,9 +67,10 @@ trường hợp thứ hai chỉ cần vào BIOS bật lên, không cần lách g
 TPM 2.0, ứng dụng đề xuất Windows 10 IoT Enterprise LTSC 2021: vẫn còn bản vá bảo mật
 tới 13/01/2032, an toàn hơn nhiều so với việc cài Windows 11 lách kiểm tra.
 
-**4. Nguồn bộ cài** — chọn file ISO có sẵn, tải tự động từ Microsoft (có nối tiếp khi đứt
-mạng), hoặc mở trang tải chính thức. Đọc luôn nội dung ISO: có những bản Windows nào,
-kiến trúc gì, install.wim nặng bao nhiêu. Có nút tính SHA-256 để đối chiếu.
+**4. Nguồn bộ cài** — chọn file ISO có sẵn hoặc mở trang tải chính thức; riêng luồng Linux
+có thêm đường tải tự động từ nguồn chính thức (nối tiếp được khi đứt mạng, tự đối chiếu mã
+băm). Đọc luôn nội dung ISO: có những bản Windows nào, kiến trúc gì, install.wim nặng bao
+nhiêu. Có nút tính SHA-256 để đối chiếu.
 
 **5. Format USB** — xoá và chia lại phân vùng, tách riêng thành một bước có xác nhận của
 chính nó. Đây là thao tác duy nhất trong ứng dụng làm mất dữ liệu, nên nó không được nấp
@@ -78,7 +80,13 @@ bên trong một nút "tạo USB" chung.
 `autounattend.xml`. Tiến trình hiện theo byte thực tế ở cả sáu chặng, kể cả khi đang chép
 một file 5 GB đơn lẻ.
 
-**7. Kiểm tra khởi động** — đọc lại chính chiếc USB vừa ghi. Xem "Vì sao cần bước kiểm tra"
+**7. Driver kèm theo USB** *(tuỳ chọn, chỉ luồng Windows)* — xuất driver của chính máy đang
+chạy, hoặc chọn một thư mục driver có sẵn, rồi chép vào USB để Windows Setup tự cài trong lúc
+cài máy. Ứng dụng đối chiếu từng card mạng và ổ đĩa của máy với mã phần cứng khai trong các
+file `.inf` để nói thẳng: card Wi-Fi này **đã có** driver trong bộ sắp chép, hay chưa.
+Xem "Kèm driver để cài xong là có Wi-Fi" bên dưới.
+
+**8. Kiểm tra khởi động** — đọc lại chính chiếc USB vừa ghi. Xem "Vì sao cần bước kiểm tra"
 bên dưới.
 
 ### Vì sao cần bước kiểm tra
@@ -140,17 +148,19 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
-### Tải tự động của Windows đã tắt
+### Windows không còn đường tải tự động
 
 Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link dựa vào: nó
 trả 404 với mọi `pageId`, và trang tải hiện tại cũng không còn tham chiếu tới nó. Kiểm
 chứng trên cả máy dựng lẫn máy người dùng thật, nên không phải chuyện chặn theo IP.
 
-Nút tải tự động vì thế bị tắt cho Windows, kèm giải thích tại chỗ và chỉ sang đường tải
-thủ công — thà nói thẳng còn hơn để người dùng bấm rồi chờ một lỗi. Phần mã lấy link vẫn
-giữ nguyên trong `download.rs` kèm test, bật lại được ngay khi có người dựng lại luồng mới.
+Tính năng này vì thế đã bỏ hẳn, không phải chỉ tắt đi: phần bóc link (`fetch_official_links`,
+`parse_skus`, `pick_sku`) và lệnh `fetch_download_links` đều không còn, và bước Nguồn bộ cài
+của Windows chỉ dựng đúng hai lựa chọn còn dùng được — chọn file có sẵn, và mở trang tải
+chính thức. Một nút mờ đi vẫn là một lời hứa: người dùng sẽ đi tìm cách bật nó lên. Lịch sử
+git giữ lại phần mã cũ nếu sau này Microsoft dựng một luồng mới.
 
-Luồng Linux không dùng endpoint này nên không bị ảnh hưởng.
+Luồng Linux không dùng endpoint này nên không bị ảnh hưởng — đường tải tự động vẫn còn ở đó.
 
 ### Tải vào thư mục riêng, ghi xong thì dọn
 
@@ -249,6 +259,74 @@ File này chủ ý **không** chứa `DiskConfiguration`. Thêm vào thì Setup 
 ổ cứng đích mà không hỏi lại lần nào — quá nguy hiểm cho một công cụ mà người dùng có thể
 cắm nhầm máy. Có hẳn một test khoá điều này lại để lần mở rộng sau không vô tình thêm vào.
 
+### Kèm driver để cài xong là có Wi-Fi
+
+Đây là vòng luẩn quẩn quen thuộc: cài lại Windows xong thì máy mất Wi-Fi, mà muốn tải driver
+Wi-Fi thì lại cần Wi-Fi. Chỉ phá được bằng cách đưa driver lên USB từ trước.
+
+**Cách đưa driver vào.** Windows Setup tự tìm thư mục tên `$WinPEDriver$` ở gốc ổ đĩa rời và
+cài mọi driver trong đó vào ảnh Windows đang cài. Không phải sửa bộ cài, và quan trọng hơn:
+không phải biết ổ USB sẽ mang chữ cái nào lúc WinPE chạy. Đường còn lại — khai `DriverPaths`
+trong `autounattend.xml` — bắt buộc ghi một đường dẫn tuyệt đối kiểu `E:\Drivers`, mà chữ cái
+đó thì không ai đoán trước được, nên ứng dụng không dùng.
+
+**Driver lấy từ đâu.** Hai nguồn, cùng một cỗ máy phân tích phía sau:
+
+- **Xuất từ chính máy đang chạy** (`Export-WindowsDriver -Online`, cần quyền quản trị). Đây là
+  nguồn đáng tin nhất khi người dùng cài lại chính chiếc máy của mình: không phải đoán model,
+  không phụ thuộc trang tải nào còn sống. Cũng khớp đúng giả định mà cả engine gợi ý đang dựa
+  vào — máy đang dùng chính là máy sắp cài.
+- **Một thư mục driver có sẵn** người dùng tự tải về và giải nén. Ứng dụng tự tìm mọi `.inf`
+  bên trong, kể cả nằm sâu nhiều tầng.
+
+**Lọc theo nhóm, và vì sao phải lọc.** Đánh đổi của `$WinPEDriver$` là Setup cài *tất cả*
+driver trong thư mục, bất kể máy có thiết bị đó hay không. Nên bộ lọc ở đây không phải để tiết
+kiệm dung lượng mà để giảm rủi ro — một driver điều khiển ổ đĩa sai có thể làm máy không khởi
+động được. Ba mức: chỉ mạng và ổ đĩa; khuyến nghị (thêm chipset, USB, bàn phím, chuột, âm
+thanh); tất cả. Card đồ hoạ cố ý nằm ngoài mức khuyến nghị: đó là nhóm hay gây lỗi nhất khi bị
+nhồi sẵn, mà thiếu nó thì Windows vẫn chạy bằng driver cơ bản rồi tự cập nhật sau.
+
+**Đối chiếu với phần cứng thật.** Phần đáng giá nhất của bước này không phải việc chép file mà
+là câu trả lời "chiếc USB này có driver cho card Wi-Fi của tôi hay không". Ứng dụng bóc mã phần
+cứng (`PCI\VEN_8086&DEV_51F0&SUBSYS_00748086`) từ các section models trong file `.inf`, đọc mã
+phần cứng thật của từng card mạng và ổ đĩa qua `Get-PnpDeviceProperty`, rồi so hai bên. So xuôi
+một chiều — mã thiết bị bắt đầu bằng mã trong INF — nên bắt được trường hợp Windows báo thêm
+đuôi `&REV_01` mà INF không ghi, nhưng **không** nhận nhầm một INF khai `SUBSYS` của hãng khác:
+Windows sẽ không cài nó, nên ứng dụng cũng không được nói là đã có.
+
+Vài chi tiết nhỏ nhưng cần thiết, mỗi cái đều có test khoá lại:
+
+- Đơn vị chép là **cả thư mục** chứa `.inf`, không phải từng file: thiếu `.sys` hay `.cat` nằm
+  cạnh là Setup từ chối cài vì chữ ký không khớp.
+- INF có thể là UTF-16LE, UTF-8, hay một bảng mã 8-bit đời cũ. Đoán sai bảng mã thì không đọc
+  ra nổi dòng `Class=` và gói driver đúng bị loại vì tưởng là không đọc được.
+- Nhiều INF chỉ ghi `ClassGuid` mà không ghi `Class`, nên có bảng tra GUID sang tên nhóm.
+- Thư mục chỉ chứa `.exe`/`.msi` được **đếm riêng và nói ra**. Đây là hiểu lầm phổ biến nhất:
+  tải "driver Wi-Fi" từ trang hãng và nhận về một file cài đặt — thứ Setup không nhồi vào ảnh
+  cài được. Im lặng bỏ qua thì người dùng tưởng đã xong.
+- Tên thư mục trùng nhau được đánh số, và ký tự lạ bị thay bằng `_` trước khi chép sang FAT32.
+
+### Khung giao diện co theo cửa sổ
+
+Ba thay đổi nhỏ giải quyết phần lớn chuyện bố cục ở các cỡ cửa sổ khác nhau:
+
+- **Cột nội dung có trần rộng 1280px và luôn nằm giữa.** Không có trần thì trên màn 2K mọi
+  thứ bị kéo dài hết bề ngang: dòng chữ dài quá tầm mắt, lưới thẻ tự tách thành sáu bảy cột
+  mỏng dính, và nút bấm bị đẩy ra tận mép màn hình. Trần này cố tình là một con số cố định
+  chứ không phải `clamp(…, vw, …)` — bất kỳ vế nào theo `vw` cũng làm cột hẹp hơn chỗ đang
+  có ở các cửa sổ cỡ vừa, tức là tự tạo ra đúng thứ khoảng trống nó sinh ra để tránh.
+- **Thanh "Quay lại / Tiếp tục" dính đáy vùng nội dung.** Trước đây hai nút nằm cuối vùng
+  cuộn, nên ở bước dài phải cuộn tới đáy mới thấy. Thanh này dùng lại đúng lớp `.shell` nên
+  nút của nó thẳng hàng với hai mép nội dung phía trên, không phải hai mép màn hình.
+- **Nội dung ngắn thì căn giữa theo chiều dọc** (`align-content: safe center`). Từ khoá
+  `safe` là phần thiết yếu: thiếu nó thì nội dung dài hơn khung sẽ bị cắt mất phần đầu và
+  không cuộn ngược lên được.
+
+Kèm theo là ba mốc co giãn: dưới 980px cột bước dựng đứng đổi thành dải ngang cuộn được ở
+trên; dưới 720px chiều cao thì cắt bớt khoảng đệm; từ 1900px trở lên nới cỡ chữ và khoảng
+đệm để cột nội dung 1280px không bị hụt giữa màn hình rộng. Cửa sổ tối thiểu hạ xuống
+840×600 để những mốc này thật sự với tới được.
+
 ---
 
 ## Cấu trúc
@@ -265,18 +343,19 @@ src-tauri/src/
   catalog_sync.rs  Đọc bảng vòng đời từ trang release-health của Microsoft
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
   recommend.rs  Engine chấm điểm và xếp hạng
-  download.rs   Lấy link chính thức + tải có tiến trình, có resume, tính SHA-256
+  download.rs   Giải link ISO Linux + tải có tiến trình, có resume, tính SHA-256
+  drivers.rs    Đọc file INF, lọc theo nhóm, đối chiếu mã phần cứng, chép vào USB
   writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
   verify.rs     Kiểm tra USB sau khi ghi: cấu trúc khởi động + đọc lại đối chiếu
   unattend.rs   Sinh autounattend.xml để bỏ qua màn hình cài đặt ban đầu
   lib.rs        Các lệnh Tauri và vòng theo dõi nền
 
 src/
-  App.tsx           Máy trạng thái theo tên bước; luồng Windows 8 bước, Linux 7
+  App.tsx           Máy trạng thái theo tên bước; luồng Windows 9 bước, Linux 7
   types.ts          Khớp 1-1 với struct Rust
   lib/api.ts        Bọc invoke + listen
   components/       Titlebar, các màn hình bước, các mảnh dùng chung
-  styles.css        Hệ thống thiết kế (biến CSS, sáng/tối)
+  styles.css        Hệ thống thiết kế (biến CSS, sáng/tối, khung co theo cửa sổ)
 ```
 
 ---
@@ -412,8 +491,12 @@ Chưa kiểm chứng được (môi trường dựng ứng dụng không có Win
   đầu trên máy Windows
 - Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối và đoạn đọc lại
   `\\.\PHYSICALDRIVE<n>`** — hãy thử trên một ổ USB không chứa dữ liệu quan trọng
-- Luồng lấy link tải tự động của Microsoft. Đây là phần dễ hỏng nhất vì Microsoft có thể đổi
-  bất cứ lúc nào, nên giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang
+- Việc xuất driver (`Export-WindowsDriver`) và đọc mã phần cứng (`Get-PnpDeviceProperty`).
+  Phần phân tích INF và đối chiếu mã thì chạy được ở mọi nơi và có test; phần gọi Windows thì
+  chưa
+- Đường tải tự động của các bản Linux trên máy người dùng thật. Máy dựng bị `releases.ubuntu.com`
+  trả 403 (Canonical chặn dải IP trung tâm dữ liệu), nên phần này chỉ kiểm chứng được tới mức
+  giải link và mã băm; giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang
   tải chính thức trong trình duyệt.
 
 **Trước khi thử tính năng ghi USB, hãy dùng một ổ USB không chứa dữ liệu quan trọng.**
