@@ -573,6 +573,23 @@ FAT32 không chứa nổi file quá 4 GB, mà `install.wim` của Windows 11 th�
 nhận diện tự động, người dùng không phải làm gì thêm. Đây là đường đi được Microsoft hỗ trợ
 chính thức, không phải mẹo vặt.
 
+DISM có hỏng, và bước này phải nói được **vì sao** hỏng. Bản đầu nuốt mất cả ba thứ cần
+thiết:
+
+- Output của DISM chảy thẳng vào stdout chung rồi bị bỏ qua vì không mang tiền tố `GWU:`.
+  Nay nó được hứng ra file riêng, và khi hỏng thì mấy dòng có nội dung cuối cùng — thường là
+  `Error: 0x…` kèm một câu tiếng Anh — được ghép vào lời báo lỗi.
+- `Start-Process -PassThru` trên PowerShell 5.1 hay trả về `ExitCode` rỗng, nên câu báo lỗi
+  từng kết thúc bằng "mã lỗi " rồi bỏ lửng. Chạm vào `$p.Handle` ngay sau khi khởi chạy thì
+  .NET giữ lại thông tin tiến trình; ngoài ra còn xét cả kết quả thật trên ổ, vì không có
+  mảnh `.swm` nào thì chắc chắn là hỏng bất kể mã lỗi nói gì.
+- Khởi chạy `dism.exe` thất bại thì `$p` là `$null`, mà `-not $null.HasExited` cho ra `TRUE`
+  — vòng lặp theo dõi tiến trình quay vô tận và cả bước ghi treo cứng, không báo gì. Nay có
+  một dòng chặn ngay tại đó.
+
+Lời báo lỗi cũng chỉ luôn đường vòng dùng được ngay: đổi sang **MBR + NTFS** thì không có
+giới hạn 4 GB nên không phải tách file. Kiểu phân vùng nằm trong khối gập ngay tại bước Ghi.
+
 Ngoài ra `Format-Volume` của Windows từ chối tạo FAT32 lớn hơn 32 GB, nên với USB dung lượng
 lớn, phân vùng boot bị cắt ở đúng 32 GB và phần dư được tạo thành một phân vùng NTFS tên
 `DATA` — thay vì bỏ phí vài chục GB.
@@ -640,7 +657,7 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 154 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+- 155 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
   `distro.rs`, `download.rs`, `drivers.rs`, `languages.rs`, `unattend.rs`, `verify.rs`,
   `writer.rs` — chạy xanh
 - Luồng tải ISO Windows chạy thật với Microsoft, lấy về link ký sẵn (`cargo test live_probe --
