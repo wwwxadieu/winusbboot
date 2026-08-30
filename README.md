@@ -306,6 +306,38 @@ Vài chi tiết nhỏ nhưng cần thiết, mỗi cái đều có test khoá l�
   cài được. Im lặng bỏ qua thì người dùng tưởng đã xong.
 - Tên thư mục trùng nhau được đánh số, và ký tự lạ bị thay bằng `_` trước khi chép sang FAT32.
 
+### Script PowerShell là chuỗi ký tự cho tới lúc chạy
+
+Toàn bộ thao tác với đĩa đi qua PowerShell, và với Rust thì mỗi script chỉ là một chuỗi ký
+tự — biên dịch sạch, test xanh, mà vẫn có thể sai cú pháp. Một lỗi thật đã lọt qua đúng cách
+đó:
+
+```powershell
+elseif (Test-Path (Join-Path $root 'efi\boot\bootia32.efi') -and -not (Test-Path ...))
+```
+
+PowerShell đọc `-and` là **tham số** của `Test-Path` chứ không phải toán tử logic, nên cả lệnh
+chết với *"A parameter cannot be found that matches parameter name 'and'"*. Nhánh `elseif` đó
+chạy với mọi ISO không phải ARM64 — tức là mọi ISO Windows thông thường — nên bước đọc nội
+dung ISO chưa bao giờ chạy được, và không có gì trong CI phát hiện ra.
+
+Bản sửa là tách mỗi lệnh ra biến riêng. Nhưng phần đáng kể hơn là cái chặn nó quay lại: một
+test đọc thẳng **mã nguồn**, bóc mọi chuỗi thô `r#"…"#` trông như PowerShell trong mọi module,
+rồi soát từng cái. Cách nhận biết là đếm độ sâu ngoặc: gặp `-and` mà cùng độ sâu với một tên
+lệnh nghĩa là toán tử đang nằm trong danh sách tham số của lệnh đó. Viết đúng thì lệnh phải
+có ngoặc riêng, tức sâu hơn một bậc. Đọc mã nguồn thay vì liệt kê tên từng hằng số để script
+mới thêm vào bất kỳ module nào cũng tự được soát.
+
+Hai chỗ khác trong cùng bước format cũng được làm chặt lại, đều thuộc loại "chưa từng chạy nên
+chưa từng lộ":
+
+- `Clear-Disk` từ chối ổ đang ở trạng thái RAW. Đó không phải lỗi cần dừng — đích đến của bước
+  đó chính là RAW. Và `Initialize-Disk` chỉ chạy được với ổ RAW, ổ đã có kiểu phân vùng thì
+  phải đổi bằng `Set-Disk`.
+- Đối tượng `New-Partition` trả về là ảnh chụp *trước* lúc Windows gán ký tự ổ đĩa, nên
+  `$part.DriveLetter` thường rỗng. Phải hỏi lại hệ thống mới có ký tự thật; không thì mọi bước
+  sau ghi vào một đường dẫn `":\"`.
+
 ### Khung giao diện co theo cửa sổ
 
 Ba thay đổi nhỏ giải quyết phần lớn chuyện bố cục ở các cỡ cửa sổ khác nhau:
