@@ -233,6 +233,25 @@ struct IsoInfoRaw {
     bootable_uefi: bool,
 }
 
+/// Gỡ cờ chỉ-đọc của một file trước khi ghi đè lên nó.
+///
+/// Mọi file trên ổ ISO đã gắn đều là chỉ-đọc, và thao tác chép trên Windows
+/// mang luôn thuộc tính đó sang đích. Ghi đè lên một file chỉ-đọc thì Windows
+/// trả về ERROR_ACCESS_DENIED, nên lần ghi thứ hai lên cùng chiếc USB sẽ chết
+/// dù lần đầu chạy trơn tru.
+///
+/// Không tồn tại, hoặc không đổi được quyền, thì im lặng bỏ qua: bước ghi ngay
+/// sau đó sẽ báo lỗi thật với thông điệp cụ thể hơn nhiều.
+pub fn clear_readonly(path: &std::path::Path) {
+    let Ok(meta) = std::fs::metadata(path) else { return };
+    let mut perms = meta.permissions();
+    if perms.readonly() {
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+}
+
 /// Chuỗi đưa vào script PowerShell luôn nằm trong nháy đơn, nên chỉ cần nhân đôi
 /// dấu nháy đơn là an toàn tuyệt đối trước mọi ký tự đặc biệt khác.
 fn escape(s: &str) -> String {
@@ -514,6 +533,8 @@ where
     match crate::unattend::generate(&req.unattend) {
         Some(xml) => {
             let path = format!("{dst_letter}:\\autounattend.xml");
+            // File của lần ghi trước có thể còn đó và đang chỉ-đọc.
+            clear_readonly(std::path::Path::new(&path));
             match std::fs::write(&path, xml) {
                 Ok(_) => emit(
                     "unattend",
@@ -708,6 +729,14 @@ $skipWim = %%SKIPWIM%%
 $BIG   = 64MB
 $CHUNK = 4MB
 
+# Gỡ ReadOnly/Hidden/System của file đích nếu nó đã có sẵn. Không có bước này
+# thì mọi lần ghi lại lên một chiếc USB đã ghi dở đều thất bại.
+function Clear-Target([string]$p) {
+  if ([System.IO.File]::Exists($p)) {
+    [System.IO.File]::SetAttributes($p, [System.IO.FileAttributes]::Normal)
+  }
+}
+
 $files = @(Get-ChildItem -Path $src -Recurse -File -Force -ErrorAction SilentlyContinue)
 $total = 0
 foreach ($f in $files) { if (-not ($skipWim -and $f.Name -ieq 'install.wim')) { $total += $f.Length } }
@@ -723,10 +752,21 @@ foreach ($f in $files) {
 
   $target = Join-Path $dst $rel
   $dir = Split-Path $target -Parent
-  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  # CreateDirectory thay cho New-Item -Path: không diễn giải ký tự đại diện
+  # trong tên thư mục, và gọi lại nhiều lần cũng không sao.
+  [void][System.IO.Directory]::CreateDirectory($dir)
+
+  # Mọi file trên một ổ ISO đã gắn đều mang thuộc tính ReadOnly, và File::Copy
+  # chép luôn thuộc tính đó sang đích. Đến lần ghi sau, ghi đè lên một file
+  # ReadOnly là CopyFile trả về ERROR_ACCESS_DENIED — .NET diễn giải thành
+  # "Access to the path '...' is denied", và ghi lại lên cùng chiếc USB luôn
+  # chết ngay tại file đầu tiên. Gỡ thuộc tính trước khi ghi, và trả file vừa
+  # chép về Normal để lần sau không vướng lại.
+  Clear-Target $target
 
   if ($f.Length -lt $BIG) {
     [System.IO.File]::Copy($f.FullName, $target, $true)
+    [System.IO.File]::SetAttributes($target, [System.IO.FileAttributes]::Normal)
     $done += $f.Length
   } else {
     $in  = [System.IO.File]::OpenRead($f.FullName)
@@ -749,6 +789,7 @@ foreach ($f in $files) {
     }
   }
   Write-Output ("GWU:P " + $done + " " + $rel)
+  [Console]::Out.Flush()
 }
 [Console]::Out.Flush()
 "#;
@@ -760,6 +801,14 @@ $out = Join-Path $dir 'install.swm'
 if (-not (Test-Path -LiteralPath $wim)) { throw 'Không tìm thấy sources\install.wim trong file ISO.' }
 
 $total = (Get-Item -LiteralPath $wim).Length
+
+# DISM từ chối ghi đè, và các mảnh .swm của lần ghi trước vẫn còn nguyên trên ổ
+# (kèm thuộc tính ReadOnly chép từ ISO) nếu người dùng ghi lại mà không format.
+Get-ChildItem -LiteralPath $dir -Filter 'install*.swm' -ErrorAction SilentlyContinue |
+  ForEach-Object {
+    [System.IO.File]::SetAttributes($_.FullName, [System.IO.FileAttributes]::Normal)
+    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+  }
 
 # DISM in tiến trình bằng ký tự về đầu dòng (\r) chứ không xuống dòng, nên đọc
 # stdout theo dòng sẽ không nhận được gì cho tới lúc nó chạy xong. Thay vì cố
@@ -796,6 +845,38 @@ Write-Output 'ok'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_only_file_can_be_overwritten_after_clearing_the_flag() {
+        // Đây đúng là tình huống làm hỏng lần ghi thứ hai: file đích còn lại từ
+        // lần trước, mang cờ chỉ-đọc chép sang từ ổ ISO.
+        let path = std::env::temp_dir()
+            .join(format!("gwu-ro-{}-{:?}.bin", std::process::id(), std::thread::current().id()));
+        std::fs::write(&path, b"cu").unwrap();
+
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+        assert!(std::fs::metadata(&path).unwrap().permissions().readonly());
+
+        clear_readonly(&path);
+        // Kiểm chính cái cờ chứ không kiểm việc ghi có bị chặn hay không: trên
+        // Linux quyền root bỏ qua cờ này, nên phép thử "ghi thử xem có lỗi
+        // không" sẽ luôn xanh và chẳng chứng minh được gì.
+        assert!(!std::fs::metadata(&path).unwrap().permissions().readonly());
+        std::fs::write(&path, b"moi").expect("gỡ cờ xong vẫn không ghi được");
+        assert_eq!(std::fs::read(&path).unwrap(), b"moi");
+
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(&path, perms);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn clearing_a_file_that_is_not_there_is_harmless() {
+        clear_readonly(std::path::Path::new("/khong/ton/tai/gwu-12345"));
+    }
 
     #[test]
     fn fat32_schemes_cap_the_boot_partition() {

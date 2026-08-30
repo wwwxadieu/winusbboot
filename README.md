@@ -306,6 +306,26 @@ Vài chi tiết nhỏ nhưng cần thiết, mỗi cái đều có test khoá l�
   cài được. Im lặng bỏ qua thì người dùng tưởng đã xong.
 - Tên thư mục trùng nhau được đánh số, và ký tự lạ bị thay bằng `_` trước khi chép sang FAT32.
 
+### File trên ISO là chỉ-đọc, và điều đó làm hỏng lần ghi thứ hai
+
+Mọi file trên một ổ ISO đã gắn đều mang thuộc tính ReadOnly — hệ thống file ISO9660/UDF vốn chỉ
+đọc. Thao tác chép của Windows (`CopyFile`, và `File::Copy` của .NET nằm trên nó) chép luôn
+thuộc tính đó sang đích. Nên sau một lần ghi, mọi file trên USB đều là chỉ-đọc.
+
+Lần ghi thứ hai lên cùng chiếc USB mà không format lại sẽ ghi đè lên chính những file đó, và
+`CopyFile` trả về `ERROR_ACCESS_DENIED`. .NET diễn giải thành *"Access to the path '...' is
+denied"*, và vì `__chunk_data` (file mới có trong ISO Windows 11 dựng từ UUP, nằm ngay gốc ISO)
+được liệt kê đầu tiên, lỗi rơi đúng vào file đầu tiên — thanh tiến trình chưa kịp nhích một
+lần nào.
+
+Bản sửa gỡ thuộc tính của file đích trước khi ghi, và trả file vừa chép về `Normal` để lần sau
+không vướng lại. Cùng một lỗi đó có ở ba chỗ khác nên sửa luôn: các mảnh `install*.swm` của lần
+trước (DISM từ chối ghi đè), `autounattend.xml`, và các gói driver chép vào `$WinPEDriver$`.
+
+Còn một giới hạn chưa xử lý: `needs_split` chỉ xét `install.wim`/`install.esd`. Nếu một file
+*khác* trên ISO vượt 4 GB thì bước chép sẽ chết giữa chừng trên FAT32 thay vì báo trước — chưa
+gặp ISO nào như vậy, nhưng đây là chỗ nên chặn sớm.
+
 ### Tốc độ ghi đo bằng cửa sổ trượt
 
 Ghi ra USB không chảy đều: chép mấy file nhỏ thì xong tức thì, tới lúc ổ đẩy bộ đệm ra bộ nhớ

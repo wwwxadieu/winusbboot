@@ -542,6 +542,9 @@ fn copy_dir(from: &Path, to: &Path) -> Result<u64> {
         if ft.is_dir() {
             bytes += copy_dir(&src, &dst)?;
         } else {
+            // Gói driver của lần chép trước có thể còn đó và đang chỉ-đọc;
+            // ghi đè lên nó là "access denied".
+            crate::writer::clear_readonly(&dst);
             bytes += std::fs::copy(&src, &dst)?;
         }
     }
