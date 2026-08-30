@@ -1,5 +1,6 @@
 /** Các mảnh giao diện dùng lại nhiều nơi. */
 
+import { useRef } from "react";
 import type { ReactNode } from "react";
 import { pct as fmtPct } from "../lib/format";
 
@@ -32,6 +33,66 @@ export function Note({
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * Chỗ giấu phần giải thích dài.
+ *
+ * Ứng dụng có nhiều đoạn cần nói — vì sao không có ISO tiếng Việt, vì sao ghi
+ * nguyên khối không cần format, vì sao đọc lại từng byte mới bắt được USB dỏm.
+ * Để tất cả nằm phơi trên trang thì người dùng phải đọc hết mới tìm ra nút bấm;
+ * bỏ đi thì lần đầu gặp lạ họ không có gì để tra. Đóng lại theo mặc định là
+ * đường giữa: trang ngắn cho người đã biết, câu trả lời vẫn ở ngay chỗ nảy ra
+ * câu hỏi cho người chưa biết.
+ */
+export function Why({ label = "Vì sao?", children }: { label?: string; children: ReactNode }) {
+  return (
+    <details className="why">
+      <summary>{label}</summary>
+      <div className="why__body">{children}</div>
+    </details>
+  );
+}
+
+/** Một khung như `Panel` nhưng gập lại được — dùng cho phần không phải ai cũng cần. */
+export function Fold({
+  title,
+  hint,
+  open,
+  children,
+}: {
+  title: string;
+  hint?: ReactNode;
+  open?: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+
+  // Khối gập hay nằm cuối trang, và mở ra thì phần bung ra rơi hết xuống dưới
+  // mép màn hình: người dùng bấm xong nhìn vào một trang không đổi gì và tưởng
+  // nút hỏng. Kéo theo đúng một lần, lúc mở.
+  //
+  // Nội dung cao hơn khung nhìn thì căn theo mép trên — căn mép dưới sẽ đẩy
+  // tiêu đề vừa bấm ra khỏi màn hình. Ngắn hơn thì kéo tối thiểu, để trang
+  // không giật lên khi thứ cần xem vốn đã nằm trong tầm mắt.
+  const onToggle = () => {
+    const el = ref.current;
+    if (!el?.open) return;
+    requestAnimationFrame(() => {
+      const tall = el.getBoundingClientRect().height > window.innerHeight * 0.8;
+      el.scrollIntoView({ behavior: "smooth", block: tall ? "start" : "nearest" });
+    });
+  };
+
+  return (
+    <details className="fold" open={open} ref={ref} onToggle={onToggle}>
+      <summary>
+        <span className="fold__title">{title}</span>
+        {hint && <span className="fold__hint">{hint}</span>}
+      </summary>
+      <div className="fold__body">{children}</div>
+    </details>
   );
 }
 

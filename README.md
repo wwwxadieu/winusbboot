@@ -9,27 +9,49 @@ Tauri 2 + React 18 + TypeScript. Backend Rust, giao diện kính xếp lớp có
 
 ## Ứng dụng làm gì
 
-**0. Chọn hệ điều hành** — bước đầu tiên, và nó quyết định hình dạng của mọi bước sau.
+Sáu bước, chung cho cả hai họ hệ điều hành:
+
+> **Hệ điều hành → Ổ USB → Phiên bản → Bộ cài → Ghi → Xong**
+
+**1. Chọn hệ điều hành** — bước đầu tiên, và nó quyết định hình dạng của mọi bước sau.
 Hai họ hệ điều hành được tạo USB theo hai cách khác hẳn nhau, không phải một cách có
-tham số. Xem "Vì sao ISO Linux phải ghi nguyên khối" bên dưới.
+tham số. Xem "Vì sao ISO Linux phải ghi nguyên khối" bên dưới. Chọn xong là sang bước sau
+luôn — câu hỏi có đúng hai đáp án thì không cần bấm thêm "Tiếp tục".
 
 | | Windows | Linux |
 |---|---|---|
-| Cách ghi | Chép file lên phân vùng đã format | Ghi nguyên khối, tương đương `dd` |
-| Bước Format | Có, tách riêng, có xác nhận | Không — thao tác ghi đã bao gồm |
+| Cách ghi | Format rồi chép file lên | Ghi nguyên khối, tương đương `dd` |
 | Cài đặt tự động | `autounattend.xml` | Không có |
 | Ổ USB tối thiểu | 8 GB | Vừa đúng cỡ file ISO |
 | Kiểm tra sau khi ghi | Đối chiếu từng file với ISO | Băm lại từng byte đã ghi |
 | Kèm driver | Có, qua `$WinPEDriver$` | Không cần — driver nằm trong nhân |
 
-**1. Nhận diện USB** — một tiến trình PowerShell chạy nền suốt vòng đời ứng dụng, cứ 3 giây
+**2. Chọn ổ USB** — một tiến trình PowerShell chạy nền suốt vòng đời ứng dụng, cứ 3 giây
 in danh sách ổ USB dưới dạng JSON. Rust đọc từng dòng và chỉ đẩy sự kiện lên giao diện khi
-danh sách thực sự đổi. Cắm hay rút ổ thì danh sách tự cập nhật, không cần bấm gì.
+danh sách thực sự đổi. Cắm hay rút ổ thì danh sách tự cập nhật, không cần bấm gì. Cắm đúng
+một ổ dùng được thì ứng dụng chọn sẵn hộ; từ hai ổ trở lên thì không, vì đoán hộ ở đó là
+đoán xem ổ nào bị xoá.
 
-**2. Quét phần cứng** — 13 mục đối chiếu với yêu cầu chính thức của Windows 11, mỗi mục một
-dấu trạng thái: bộ xử lý (kiểu, số nhân, xung nhịp, kiến trúc), RAM, dung lượng ổ, chế độ
-khởi động, Secure Boot, TPM, card đồ hoạ, và ba mục màn hình (độ phân giải, kích thước,
-độ sâu màu).
+**3. Chọn phiên bản** — đối chiếu cấu hình máy với yêu cầu của từng bản Windows rồi chấm
+điểm 0–100. Mỗi bản được gắn một trong bốn kết luận:
+
+| Kết luận | Ý nghĩa |
+|---|---|
+| Cài được ngay | Đủ mọi điều kiện |
+| Cần chỉnh BIOS | Phần cứng có sẵn, chỉ đang tắt (TPM, Secure Boot) |
+| Phải bỏ qua kiểm tra | Thiếu điều kiện cứng nhưng vẫn cài được nếu chấp nhận rủi ro |
+| Không cài được | Thiếu điều kiện không thể lách (RAM, dung lượng, kiến trúc) |
+
+Điểm mấu chốt là engine phân biệt **"máy không có TPM"** với **"máy có TPM nhưng đang tắt"** —
+trường hợp thứ hai chỉ cần vào BIOS bật lên, không cần lách gì cả. Với máy thật sự không có
+TPM 2.0, ứng dụng đề xuất Windows 10 IoT Enterprise LTSC 2021: vẫn còn bản vá bảo mật
+tới 13/01/2032, an toàn hơn nhiều so với việc cài Windows 11 lách kiểm tra.
+
+Ngay dưới bảng gợi ý là khối **Chi tiết phần cứng**, gập lại sẵn: 13 mục đối chiếu với yêu
+cầu chính thức của Windows 11 — bộ xử lý (kiểu, số nhân, xung nhịp, kiến trúc), RAM, dung
+lượng ổ, chế độ khởi động, Secure Boot, TPM, card đồ hoạ, và ba mục màn hình. Đây từng là
+một bước riêng, nhưng người dùng không *làm* gì ở đó, chỉ đọc — mà bắt bấm "Tiếp tục" để đi
+qua một trang chưa chắc đã muốn xem thì đó là một bước thừa.
 
 Bốn trạng thái, và ranh giới giữa chúng mới là phần quan trọng:
 
@@ -52,42 +74,34 @@ này đều có test khoá lại.
 > `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State`. Cả hai đều đọc được bằng tài
 > khoản thường và đủ chính xác để kết luận; giao diện ghi rõ thông tin đến từ nguồn nào.
 
-**3. Gợi ý phiên bản** — đối chiếu cấu hình với yêu cầu của từng bản Windows rồi chấm điểm
-0–100. Mỗi bản được gắn một trong bốn kết luận:
+**4. Bộ cài** — chọn file ISO có sẵn, tải tự động từ nguồn chính thức (cả Windows lẫn
+Linux, nối tiếp được khi đứt mạng), hoặc mở trang tải trong trình duyệt. Đọc luôn nội dung ISO:
+có những bản Windows nào, kiến trúc gì, install.wim nặng bao nhiêu. Có nút tính SHA-256; riêng
+bản Linux thì đối chiếu tự động với mã băm dự án công bố.
 
-| Kết luận | Ý nghĩa |
-|---|---|
-| Cài được ngay | Đủ mọi điều kiện |
-| Cần chỉnh BIOS | Phần cứng có sẵn, chỉ đang tắt (TPM, Secure Boot) |
-| Phải bỏ qua kiểm tra | Thiếu điều kiện cứng nhưng vẫn cài được nếu chấp nhận rủi ro |
-| Không cài được | Thiếu điều kiện không thể lách (RAM, dung lượng, kiến trúc) |
+**5. Ghi** — một nút, tám chặng đếm liền một mạch: xoá ổ và chia lại phân vùng (2 chặng),
+rồi chép file, tách install.wim nếu cần, ghi mã khởi động, ghi `autounattend.xml` (6 chặng).
+Tiến trình hiện theo byte thực tế, kể cả khi đang chép một file 5 GB đơn lẻ. Luồng Linux thì
+ghi nguyên khối, ba chặng.
 
-Điểm mấu chốt là engine phân biệt **"máy không có TPM"** với **"máy có TPM nhưng đang tắt"** —
-trường hợp thứ hai chỉ cần vào BIOS bật lên, không cần lách gì cả. Với máy thật sự không có
-TPM 2.0, ứng dụng đề xuất Windows 10 IoT Enterprise LTSC 2021: vẫn còn bản vá bảo mật
-tới 13/01/2032, an toàn hơn nhiều so với việc cài Windows 11 lách kiểm tra.
+Format từng là một bước riêng, đặt trước bước ghi. Tách ra không bảo vệ được gì thêm: không
+có luồng nào format xong rồi dừng lại, nên nó chỉ thêm một trang phải đọc, một ô phải tick,
+một nút phải bấm — cộng một trạng thái hỏng người dùng tự tạo ra được, là format ổ này rồi
+đi ghi lên ổ khác. Ô xác nhận xoá dữ liệu thì vẫn còn nguyên, chỉ còn đúng một cái.
 
-**4. Nguồn bộ cài** — chọn file ISO có sẵn hoặc mở trang tải chính thức; riêng luồng Linux
-có thêm đường tải tự động từ nguồn chính thức (nối tiếp được khi đứt mạng, tự đối chiếu mã
-băm). Đọc luôn nội dung ISO: có những bản Windows nào, kiến trúc gì, install.wim nặng bao
-nhiêu. Có nút tính SHA-256 để đối chiếu.
+Kiểu phân vùng (GPT+FAT32, MBR+FAT32, MBR+NTFS) và tên ổ nằm trong khối **Kiểu phân vùng và
+tên ổ**, gập lại sẵn: mặc định đúng cho gần như mọi máy, và ISO không boot được UEFI thì ứng
+dụng tự chuyển sang MBR.
 
-**5. Format USB** — xoá và chia lại phân vùng, tách riêng thành một bước có xác nhận của
-chính nó. Đây là thao tác duy nhất trong ứng dụng làm mất dữ liệu, nên nó không được nấp
-bên trong một nút "tạo USB" chung.
+**6. Xong** — mọi việc *sau khi* đã ghi. Phần kiểm tra khởi động chạy ngay khi mở bước này
+và hiện kết luận (xem "Vì sao cần bước kiểm tra" bên dưới); phần đối chiếu lại từng byte và
+phần **Kèm driver vào USB** thì gập lại, vì không phải ai cũng cần.
 
-**6. Ghi bộ cài** — chép file, tách install.wim nếu cần, ghi mã khởi động, và ghi
-`autounattend.xml`. Tiến trình hiện theo byte thực tế ở cả sáu chặng, kể cả khi đang chép
-một file 5 GB đơn lẻ.
-
-**7. Driver kèm theo USB** *(tuỳ chọn, chỉ luồng Windows)* — xuất driver của chính máy đang
-chạy, hoặc chọn một thư mục driver có sẵn, rồi chép vào USB để Windows Setup tự cài trong lúc
-cài máy. Ứng dụng đối chiếu từng card mạng và ổ đĩa của máy với mã phần cứng khai trong các
-file `.inf` để nói thẳng: card Wi-Fi này **đã có** driver trong bộ sắp chép, hay chưa.
-Xem "Kèm driver để cài xong là có Wi-Fi" bên dưới.
-
-**8. Kiểm tra khởi động** — đọc lại chính chiếc USB vừa ghi. Xem "Vì sao cần bước kiểm tra"
-bên dưới.
+Kèm driver *(chỉ luồng Windows)* — xuất driver của chính máy đang chạy, hoặc chọn một thư
+mục driver có sẵn, rồi chép vào USB để Windows Setup tự cài trong lúc cài máy. Ứng dụng đối
+chiếu từng card mạng và ổ đĩa của máy với mã phần cứng khai trong các file `.inf` để nói
+thẳng: card Wi-Fi này **đã có** driver trong bộ sắp chép, hay chưa. Xem "Kèm driver để cài
+xong là có Wi-Fi" bên dưới.
 
 ### Vì sao cần bước kiểm tra
 
@@ -148,19 +162,62 @@ Ba ranh giới engine phải phân biệt cho đúng:
   bản khó cài nhất lên đầu bảng cho đúng nhóm máy của người dùng ít kinh nghiệm nhất —
   lỗi này đã xảy ra một lần và giờ có test khoá lại.
 
-### Windows không còn đường tải tự động
+### Luồng tải ISO Windows: hỏng, bỏ, rồi dựng lại
 
-Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link dựa vào: nó
-trả 404 với mọi `pageId`, và trang tải hiện tại cũng không còn tham chiếu tới nó. Kiểm
-chứng trên cả máy dựng lẫn máy người dùng thật, nên không phải chuyện chặn theo IP.
+Microsoft gỡ endpoint `/api/controls/contentinclude/html` mà luồng lấy link cũ dựa vào — nó trả
+404 với mọi `pageId`. Tính năng tải tự động cho Windows vì thế đã bị bỏ hẳn một thời gian: giữ
+lại một nút bấm chỉ dẫn tới lỗi thì tệ hơn là không có nút.
 
-Tính năng này vì thế đã bỏ hẳn, không phải chỉ tắt đi: phần bóc link (`fetch_official_links`,
-`parse_skus`, `pick_sku`) và lệnh `fetch_download_links` đều không còn, và bước Nguồn bộ cài
-của Windows chỉ dựng đúng hai lựa chọn còn dùng được — chọn file có sẵn, và mở trang tải
-chính thức. Một nút mờ đi vẫn là một lời hứa: người dùng sẽ đi tìm cách bật nó lên. Lịch sử
-git giữ lại phần mã cũ nếu sau này Microsoft dựng một luồng mới.
+Sau đó Microsoft dựng lại luồng mới ở `software-download-connector/api`, và tính năng được viết
+lại theo đúng hình dạng đó. Hình dạng này **đọc thẳng từ JavaScript của trang tải** chứ không
+đoán, nên khớp từng tham số với thứ trình duyệt thật gửi đi:
 
-Luồng Linux không dùng endpoint này nên không bị ảnh hưởng — đường tải tự động vẫn còn ở đó.
+```
+GET /software-download-connector/api/getskuinformationbyproductedition
+      ?profile=606624d44113&ProductEditionId=<mã>&SKU=undefined
+      &friendlyFileName=undefined&Locale=en-US&sessionID=<GUID>
+  → { "Skus": [ { "Id", "Language", "LocalizedLanguage" } ] }
+
+GET /software-download-connector/api/GetProductDownloadLinksBySku
+      ?profile=606624d44113&ProductEditionId=undefined&SKU=<id>
+      &friendlyFileName=undefined&Locale=en-US&sessionID=<GUID>
+  → { "ProductDownloadOptions": [ { "Uri", "DownloadType" } ] }
+```
+
+Ba chi tiết quyết định việc này chạy đúng hay chạy sai một cách âm thầm:
+
+- **Mã product edition đọc từ trang, không ghi cứng.** Mã đổi theo từng bản phát hành, ghi cứng
+  thì tới bản sau là hỏng mà không ai biết.
+- **Chọn SKU so bằng dấu bằng, không so tiền tố.** Microsoft có cả `English` lẫn
+  `English International`, nên so tiền tố sẽ đưa người chọn bản Mỹ sang bản quốc tế *mà vẫn báo
+  là đúng*. Cũng vì API gọi bản Mỹ đúng một chữ `English` nên bảng ngôn ngữ trong `languages.rs`
+  đổi theo; khâu chọn nhận thêm cả tên ở trường `LocalizedLanguage` để lần đổi tên sau không làm
+  hỏng.
+- **Không có mã băm.** Microsoft không công bố mã băm ở đâu trong luồng tải của họ, nên
+  `ResolvedIso.sha256` là `None` với Windows và giao diện chỉ hiện mã băm *tính được* chứ không
+  nói là "khớp" hay "không khớp". Không có gì để so thì đừng vờ như có.
+
+**Giới hạn thật, và người dùng cần biết trước:** Microsoft chặn bước lấy link theo địa chỉ IP.
+Gọi từ một máy chủ trung tâm dữ liệu thì bước 1 vẫn trả về đủ 38 ngôn ngữ, còn bước 2 trả về
+`{"Errors":[{"Key":"ErrorSettings.SentinelReject"}]}`. Ứng dụng diễn giải đúng lỗi đó thành lời
+khuyên cụ thể — tắt VPN, hoặc tải bằng trình duyệt — thay vì ném một chuỗi tiếng Anh khó hiểu.
+Mạng gia đình bình thường thì không vướng.
+
+### Mở app là đã có quyền quản trị
+
+Gần như mọi thứ ứng dụng này làm đều đòi quyền quản trị: chia lại phân vùng, ghi thẳng ra
+`\\.\PHYSICALDRIVE`, xuất driver khỏi kho của Windows. Mở ở quyền thường thì người dùng đi
+được năm bước rồi mới bị chặn.
+
+Nên file `.exe` nhúng manifest khai `requestedExecutionLevel level="requireAdministrator"`:
+Windows hiện hộp thoại UAC **trước khi** app khởi động, và lối tắt có khiên nhỏ. Cách còn lại —
+tự khởi động lại với quyền cao hơn — phải mở app một lần rồi tắt đi mở lại, vừa chớp nháy vừa
+dễ thành vòng lặp nếu người dùng bấm "No".
+
+Khai manifest riêng là **thay thế hẳn** manifest mặc định của `tauri-build`, nên khối
+`Microsoft.Windows.Common-Controls` phải chép lại; thiếu nó thì các hộp thoại hệ thống mất kiểu
+dáng đời mới. Đánh đổi: tài khoản chuẩn không có mật khẩu quản trị sẽ không mở được app — đúng
+đánh đổi, vì không có quyền đó thì cũng không tạo được USB.
 
 ### Tải vào thư mục riêng, ghi xong thì dọn
 
@@ -174,7 +231,7 @@ buổi là thiệt hại không sửa được. `IsoInfo.managed` mang thông ti
 từ chối thẳng mọi đường dẫn nằm ngoài, và có test cho cả trường hợp thư mục trùng tiền tố
 (`GetWinUSB-cu` không được coi là `GetWinUSB`).
 
-Đánh đổi: đối chiếu từng byte ở bước Kiểm tra cần chính file ISO gốc, nên bật xoá tự động
+Đánh đổi: đối chiếu từng byte ở bước cuối cần chính file ISO gốc, nên bật xoá tự động
 thì mất chức năng đó. Giao diện nói rõ điều này ở cả hai nơi thay vì để người dùng bấm vào
 một nút đã biến mất.
 
@@ -218,8 +275,8 @@ nó được dựng cùng — máy sẽ báo không tìm thấy thiết bị kh�
 initramfs.
 
 Vì ghi từ byte 0 nên thao tác này xoá luôn bảng phân vùng cũ. Không cần và cũng không
-được format trước, nên **bước Format không có trong luồng Linux** — và ô xác nhận xoá dữ
-liệu chuyển sang nằm ngay ở bước ghi, vì đó mới là lúc dữ liệu biến mất.
+được format trước, nên **luồng Linux không chạy bước chia phân vùng nào cả** — chỉ một thao
+tác ghi, ba chặng, và ô xác nhận xoá dữ liệu nằm ngay tại đó.
 
 Trên Windows, ghi thẳng ra `\\.\PHYSICALDRIVE<n>` cần ba việc đúng thứ tự: `Clear-Disk`
 để hệ điều hành nhả khoá volume, đưa ổ về offline để Windows không gắn phân vùng mới vào
@@ -306,6 +363,26 @@ Vài chi tiết nhỏ nhưng cần thiết, mỗi cái đều có test khoá l�
   cài được. Im lặng bỏ qua thì người dùng tưởng đã xong.
 - Tên thư mục trùng nhau được đánh số, và ký tự lạ bị thay bằng `_` trước khi chép sang FAT32.
 
+### File trên ISO là chỉ-đọc, và điều đó làm hỏng lần ghi thứ hai
+
+Mọi file trên một ổ ISO đã gắn đều mang thuộc tính ReadOnly — hệ thống file ISO9660/UDF vốn chỉ
+đọc. Thao tác chép của Windows (`CopyFile`, và `File::Copy` của .NET nằm trên nó) chép luôn
+thuộc tính đó sang đích. Nên sau một lần ghi, mọi file trên USB đều là chỉ-đọc.
+
+Lần ghi thứ hai lên cùng chiếc USB mà không format lại sẽ ghi đè lên chính những file đó, và
+`CopyFile` trả về `ERROR_ACCESS_DENIED`. .NET diễn giải thành *"Access to the path '...' is
+denied"*, và vì `__chunk_data` (file mới có trong ISO Windows 11 dựng từ UUP, nằm ngay gốc ISO)
+được liệt kê đầu tiên, lỗi rơi đúng vào file đầu tiên — thanh tiến trình chưa kịp nhích một
+lần nào.
+
+Bản sửa gỡ thuộc tính của file đích trước khi ghi, và trả file vừa chép về `Normal` để lần sau
+không vướng lại. Cùng một lỗi đó có ở ba chỗ khác nên sửa luôn: các mảnh `install*.swm` của lần
+trước (DISM từ chối ghi đè), `autounattend.xml`, và các gói driver chép vào `$WinPEDriver$`.
+
+Còn một giới hạn chưa xử lý: `needs_split` chỉ xét `install.wim`/`install.esd`. Nếu một file
+*khác* trên ISO vượt 4 GB thì bước chép sẽ chết giữa chừng trên FAT32 thay vì báo trước — chưa
+gặp ISO nào như vậy, nhưng đây là chỗ nên chặn sớm.
+
 ### Tốc độ ghi đo bằng cửa sổ trượt
 
 Ghi ra USB không chảy đều: chép mấy file nhỏ thì xong tức thì, tới lúc ổ đẩy bộ đệm ra bộ nhớ
@@ -320,9 +397,9 @@ gian quá ngắn để chia, sai số đồng hồ lấn át phép đo, và mộ
 giây đầu còn tệ hơn là chưa có số.
 
 Đo ở cả ba chỗ thật sự đếm được byte: chép bộ cài Windows, tách `install.wim`, và ghi nguyên
-khối cho Linux — cộng thêm phần đọc lại từng byte ở bước Kiểm tra. Bước Format và phần đối
-chiếu theo *số file* thì không có byte nào để đo, và `speed_bps == 0` chính là dấu hiệu để giao
-diện ẩn phần tốc độ đi thay vì hiện một con số vô nghĩa.
+khối cho Linux — cộng thêm phần đọc lại từng byte ở bước cuối. Hai chặng chia phân vùng và
+phần đối chiếu theo *số file* thì không có byte nào để đo, và `speed_bps == 0` chính là dấu hiệu
+để giao diện ẩn phần tốc độ đi thay vì hiện một con số vô nghĩa.
 
 Chi tiết đáng nói về cách nối vào mã cũ: hàm ghi báo tiến trình qua một closure `emit` dùng
 chung cho hơn ba mươi chỗ gọi, mà chỉ ba trong số đó đếm được byte. Thêm một tham số tốc độ vào
@@ -405,7 +482,7 @@ src-tauri/src/
   catalog_sync.rs  Đọc bảng vòng đời từ trang release-health của Microsoft
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
   recommend.rs  Engine chấm điểm và xếp hạng
-  download.rs   Giải link ISO Linux + tải có tiến trình, có resume, tính SHA-256
+  download.rs   Giải link ISO Windows/Linux + tải có tiến trình, có resume, tính SHA-256
   drivers.rs    Đọc file INF, lọc theo nhóm, đối chiếu mã phần cứng, chép vào USB
   writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
   verify.rs     Kiểm tra USB sau khi ghi: cấu trúc khởi động + đọc lại đối chiếu
@@ -413,10 +490,10 @@ src-tauri/src/
   lib.rs        Các lệnh Tauri và vòng theo dõi nền
 
 src/
-  App.tsx           Máy trạng thái theo tên bước; luồng Windows 9 bước, Linux 7
+  App.tsx           Máy trạng thái theo tên bước; sáu bước, chung cho cả hai họ
   types.ts          Khớp 1-1 với struct Rust
   lib/api.ts        Bọc invoke + listen
-  components/       Titlebar, các màn hình bước, các mảnh dùng chung
+  components/       Titlebar, các màn hình bước, các mảnh dùng chung (`Fold`, `Why`…)
   styles.css        Hệ thống thiết kế (biến CSS, sáng/tối, khung co theo cửa sổ)
 ```
 
@@ -539,18 +616,20 @@ cd src-tauri && cargo test
 
 Đã kiểm chứng:
 
-- 111 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
-  `distro.rs`, `download.rs`, `languages.rs`, `unattend.rs`, `verify.rs`, `writer.rs` —
-  chạy xanh
+- 151 test đơn vị cho `cpu.rs`, `catalog.rs`, `catalog_sync.rs`, `checks.rs`, `recommend.rs`,
+  `distro.rs`, `download.rs`, `drivers.rs`, `languages.rs`, `unattend.rs`, `verify.rs`,
+  `writer.rs` — chạy xanh
 - Sáu địa chỉ `SHA256SUMS` trong danh mục distro đã kiểm chứng giải ra đúng file ISO
   hiện hành
 - Toàn bộ file Rust qua được kiểm tra cú pháp
 - Frontend TypeScript qua `tsc` ở chế độ `strict` không lỗi
+- Cả sáu bước của cả hai luồng chạy qua trong trình duyệt với backend giả, dữ liệu do chính
+  engine Rust sinh ra — không có lỗi runtime nào
 
 Chưa kiểm chứng được (môi trường dựng ứng dụng không có Windows và không tải được thư viện):
 
-- Biên dịch trọn vẹn phần Rust có phụ thuộc `tauri`/`reqwest` — hãy chạy `cargo check` lần
-  đầu trên máy Windows
+- Chạy thật trên Windows. Phần Rust đã `cargo check` sạch cho `x86_64-pc-windows-msvc`
+  (không còn cảnh báo nào), nhưng biên dịch được không đồng nghĩa với chạy đúng
 - Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối và đoạn đọc lại
   `\\.\PHYSICALDRIVE<n>`** — hãy thử trên một ổ USB không chứa dữ liệu quan trọng
 - Việc xuất driver (`Export-WindowsDriver`) và đọc mã phần cứng (`Get-PnpDeviceProperty`).

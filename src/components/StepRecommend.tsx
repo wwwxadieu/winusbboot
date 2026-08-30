@@ -1,7 +1,8 @@
+import type { ReactNode } from "react";
 import type {
   Candidate, CatalogOrigin, Recommendation, SetupLanguage, Verdict,
 } from "../types";
-import { Empty, Note, Panel } from "./ui";
+import { Empty, Fold, Note, Panel, Why } from "./ui";
 
 const ORIGIN_LABEL: Record<CatalogOrigin, string> = {
   live: "Vừa đọc từ trang của Microsoft",
@@ -102,7 +103,7 @@ export function StepRecommend({
   onChoose,
   onRefreshCatalog,
   refreshing,
-  onSeeHardware,
+  hardware,
   languages,
   language,
   onLanguage,
@@ -113,9 +114,10 @@ export function StepRecommend({
   onChoose: (id: string) => void;
   onRefreshCatalog: () => void;
   refreshing: boolean;
-  onSeeHardware: () => void;
+  /** Chi tiết phần cứng, gập lại ngay dưới kết luận mà nó giải thích. */
+  hardware: ReactNode;
   languages: SetupLanguage[];
-  /** Tên Microsoft của ngôn ngữ đang chọn, vd "English (United States)". */
+  /** Tên Microsoft của ngôn ngữ đang chọn, vd "English International". */
   language: string;
   onLanguage: (ms: string) => void;
 }) {
@@ -145,21 +147,11 @@ export function StepRecommend({
     <>
       <div className="main__head">
         <h1>Chọn phiên bản Windows</h1>
-        <p>Điểm số phản ánh mức độ phù hợp giữa cấu hình máy và yêu cầu của từng bản, có tính cả thời gian còn được hỗ trợ.</p>
       </div>
 
-      <Note type={noteType} icon="◈" title="Kết luận">
-        {rec.summary}
-        {/* Chi tiết từng thành phần nằm trọn ở bước Phần cứng — ở đây chỉ nhắc
-            kết quả và đường dẫn quay lại, tránh lặp cùng một bảng hai lần. */}
-        <div className="actions">
-          <button className="btn btn--sm btn--ghost" onClick={onSeeHardware}>
-            {s.passed}/{s.total} mục phần cứng đạt — xem chi tiết →
-          </button>
-        </div>
-      </Note>
+      <Note type={noteType} icon="◈">{rec.summary}</Note>
 
-      <Panel title="Các phiên bản phù hợp, xếp theo điểm">
+      <Panel title="Xếp theo mức phù hợp với máy này">
         <div className="grid grid--2">
           {rec.candidates.map((c) => (
             <RecCard
@@ -170,20 +162,18 @@ export function StepRecommend({
             />
           ))}
         </div>
-      </Panel>
 
-      <Panel title="Nguồn dữ liệu phiên bản">
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="actions">
           <span className="pill" data-v={rec.catalog_origin === "live" ? "recommended" : undefined}>
             {ORIGIN_LABEL[rec.catalog_origin]}
           </span>
           {rec.catalog_synced_on && (
-            <span style={{ fontSize: 12.5, color: "var(--text-dim)" }}>
-              Cập nhật {rec.catalog_synced_on.split("-").reverse().join("/")}
+            <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
+              {rec.catalog_synced_on.split("-").reverse().join("/")}
             </span>
           )}
           <div className="spacer" />
-          <button className="btn btn--sm" onClick={onRefreshCatalog} disabled={refreshing}>
+          <button className="btn btn--sm btn--ghost" onClick={onRefreshCatalog} disabled={refreshing}>
             {refreshing && <span className="spinner" />} Đồng bộ lại
           </button>
         </div>
@@ -191,24 +181,28 @@ export function StepRecommend({
         {rec.catalog_origin === "builtin" && (
           <div style={{ marginTop: 12 }}>
             <Note type="warn" icon="!">
-              Chưa đồng bộ được với Microsoft nên đang dùng bảng nhúng, đóng băng từ lúc ứng dụng
-              được biên dịch. Phiên bản Windows ra sau thời điểm đó sẽ không xuất hiện ở đây.
+              Chưa đồng bộ được với Microsoft nên đang dùng bảng nhúng sẵn — bản Windows ra sau
+              lúc ứng dụng được biên dịch sẽ không có ở đây.
             </Note>
           </div>
         )}
         {rec.catalog_note && (
           <div style={{ marginTop: 12 }}>
-            <Note type="warn" icon="!" title="Đồng bộ chưa trọn vẹn">{rec.catalog_note}</Note>
+            <Note type="warn" icon="!">{rec.catalog_note}</Note>
           </div>
         )}
       </Panel>
 
-      <Panel title="Thông số nên chọn khi tải bộ cài">
+      <Fold title="Chi tiết phần cứng" hint={`${s.passed}/${s.total} mục đạt · ${rec.architecture}`}>
+        {hardware}
+      </Fold>
+
+      <Panel title="Bộ cài sẽ tải">
         <div className="grid grid--3">
           <div className="stat"><div className="stat__k">Kiến trúc</div><div className="stat__v">{rec.architecture}</div></div>
           <div className="stat"><div className="stat__k">Phiên bản</div><div className="stat__v">{rec.edition_hint}</div></div>
           <div className="stat">
-            <div className="stat__k">Ngôn ngữ bộ cài</div>
+            <div className="stat__k">Ngôn ngữ</div>
             <div style={{ marginTop: 5 }}>
               <select
                 className="field"
@@ -226,16 +220,12 @@ export function StepRecommend({
 
         {/* Đây là câu hỏi người dùng Việt Nam nào cũng hỏi, nên trả lời sẵn
             ngay tại chỗ chọn thay vì để họ đi tìm rồi tự kết luận là app thiếu. */}
-        <div style={{ marginTop: 12 }}>
-          <Note type="info" icon="i" title="Vì sao không có tiếng Việt">
-            Microsoft không phát hành ISO Windows tiếng Việt — trang tải chính thức chưa
-            bao giờ có mục này. Cách làm thông thường là cài một bản ở trên rồi thêm gói
-            ngôn ngữ hiển thị tiếng Việt sau, trong Settings → Time &amp; language.
-            <br />
-            Riêng <b style={{ display: "inline" }}>định dạng ngày tháng, tiền tệ và bàn
-            phím</b> thì vẫn đặt được thành Việt Nam ngay từ đầu — chọn ở bước Ghi bộ cài.
-          </Note>
-        </div>
+        <Why label="Không có tiếng Việt?">
+          Microsoft chưa bao giờ phát hành ISO Windows tiếng Việt. Cách làm thông thường là
+          cài một bản ở trên rồi thêm gói ngôn ngữ hiển thị sau, trong Settings → Time &amp;
+          language. Riêng định dạng ngày tháng, tiền tệ và bàn phím thì đặt được thành Việt
+          Nam ngay từ đầu — chọn ở bước Ghi.
+        </Why>
       </Panel>
     </>
   );

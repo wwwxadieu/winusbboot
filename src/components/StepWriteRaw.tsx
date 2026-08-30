@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorText, events } from "../lib/api";
 import type { DistroRelease, IsoInfo, UsbDisk, WriteProgress } from "../types";
 import { bytes, pct, rateLine } from "../lib/format";
-import { Note, Panel, Progress } from "./ui";
+import { Fold, Note, Panel, Progress, Why } from "./ui";
 
 const STAGE_NAME: Record<string, string> = {
   check: "Kiểm tra an toàn",
@@ -109,7 +109,7 @@ export function StepWriteRaw({
       <>
         <div className="main__head"><h1>Ghi ra USB</h1></div>
         <Note type="warn" icon="!">
-          Cần chọn xong cả ổ USB lẫn file ISO thì mới ghi được. Hãy quay lại các bước trước.
+          Cần chọn xong cả ổ USB lẫn file ISO. Hãy quay lại các bước trước.
         </Note>
       </>
     );
@@ -119,10 +119,6 @@ export function StepWriteRaw({
     <>
       <div className="main__head">
         <h1>Ghi ra USB</h1>
-        <p>
-          Ghi nguyên khối file ISO ra ổ USB — tương đương lệnh <code>dd</code>. Mất khoảng
-          3–15 phút tuỳ tốc độ USB.
-        </p>
       </div>
       <div ref={progRef} />
       {(running || prog) && !done && (
@@ -138,11 +134,11 @@ export function StepWriteRaw({
       )}
 
       {!admin && (
-        <Note type="warn" icon="🔑" title="Cần quyền quản trị">
+        <Note type="warn" icon="🔑">
           Ghi thẳng ra thiết bị đòi hỏi quyền Administrator.
           <div className="actions">
             <button className="btn btn--sm btn--primary" onClick={onAdminRelaunch}>
-              Khởi động lại với quyền quản trị
+              Mở lại với quyền quản trị
             </button>
           </div>
         </Note>
@@ -169,38 +165,35 @@ export function StepWriteRaw({
       </Panel>
 
       {iso.managed && (
-        <Panel title="Sau khi ghi xong">
-          <label style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
+        <Fold title="Xoá file ISO sau khi ghi xong" hint={cleanup ? `Có · giải phóng ${bytes(iso.size)}` : "Không"}>
+          <label style={{ display: "flex", gap: 9, alignItems: "center", cursor: "pointer" }}>
             <input type="checkbox" checked={cleanup} disabled={running}
                    onChange={(e) => setCleanup(e.target.checked)}
-                   style={{ width: 16, height: 16, marginTop: 2, accentColor: "var(--accent)" }} />
-            <span>
-              <span style={{ fontWeight: 600, fontSize: 13.5, display: "block" }}>
-                Xoá file ISO sau khi ghi xong
-              </span>
-              <span style={{ fontSize: 12.2, color: "var(--text-dim)", display: "block", marginTop: 2 }}>
-                File {bytes(iso.size)} này do ứng dụng tự tải về, ghi xong là không cần nữa.
-                Tắt tuỳ chọn nếu bạn muốn giữ lại để ghi thêm USB khác — hoặc để dùng chức
-                năng đối chiếu từng byte ở bước Kiểm tra, vì việc đó cần chính file này.
-              </span>
-            </span>
+                   style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
+            <span style={{ fontSize: 13 }}>Xoá file ISO ứng dụng đã tải, sau khi ghi xong</span>
           </label>
-        </Panel>
+          <Why>
+            Giữ lại thì ghi thêm chiếc USB nữa không phải tải lại, và bước cuối mới đối chiếu
+            được từng byte trên USB với bản gốc — việc đó cần chính file này.
+          </Why>
+        </Fold>
       )}
 
       {release?.secure_boot === "unsigned" && (
         <Note type="warn" icon="!" title="Nhớ tắt Secure Boot trước khi khởi động">
-          {release.name} không có shim ký sẵn. Máy đang bật Secure Boot sẽ bỏ qua USB này mà
-          không báo lỗi gì — dễ tưởng là USB hỏng.
+          {release.name} không có shim ký sẵn — máy đang bật Secure Boot sẽ lặng lẽ bỏ qua USB này.
         </Note>
       )}
 
-      <Note type="danger" icon="⚠" title="Xác nhận trước khi ghi đè">
-        Ghi nguyên khối bắt đầu từ byte đầu tiên của ổ, nên{" "}
-        <b style={{ display: "inline" }}>toàn bộ dữ liệu và bảng phân vùng</b> của ổ{" "}
-        <b style={{ display: "inline" }}>{disk.model}</b> (ổ đĩa {disk.number}, {bytes(disk.size, 0)})
-        sẽ bị xoá và không khôi phục được. Luồng Linux không có bước Format riêng vì thao tác
-        này đã bao gồm việc đó.
+      <Note type="danger" icon="⚠">
+        Ổ <b style={{ display: "inline" }}>{disk.model}</b> ({bytes(disk.size, 0)}) sẽ bị xoá
+        toàn bộ, kể cả bảng phân vùng, và không khôi phục được.
+        <Why label="Ghi nguyên khối là gì?">
+          Ứng dụng đổ thẳng từng byte của file ISO ra ổ từ byte đầu tiên, tương đương lệnh
+          <code> dd</code> trên Linux — vì mã khởi động của ISO Linux nằm ngay trong ảnh đĩa.
+          Vì vậy luồng này không có bước Format riêng: thao tác ghi đã xoá và dựng lại toàn bộ
+          ổ. Mất khoảng 3–15 phút tuỳ tốc độ USB.
+        </Why>
         <label style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 11, cursor: "pointer" }}>
           <input type="checkbox" checked={confirmed} disabled={running}
                  onChange={(e) => setConfirmed(e.target.checked)}
@@ -219,10 +212,10 @@ export function StepWriteRaw({
 
       {done && (
         <Note type="ok" icon="✓" title="USB đã sẵn sàng">
-          Cắm USB vào máy cần cài, vào menu boot (thường là F12, F9 hoặc Esc tuỳ hãng) và chọn
-          thiết bị USB. Windows có thể hiện thông báo "cần format ổ đĩa" khi bạn cắm lại USB
-          này — đó là bình thường, vì Windows không đọc được phân vùng Linux;{" "}
-          <b style={{ display: "inline" }}>đừng bấm format</b>.
+          Cắm vào máy cần cài, vào menu boot (thường là F12, F9 hoặc Esc) rồi chọn thiết bị USB.
+          Cắm lại vào Windows mà thấy đòi "format ổ đĩa" thì{" "}
+          <b style={{ display: "inline" }}>đừng bấm format</b> — Windows chỉ không đọc được
+          phân vùng Linux thôi.
         </Note>
       )}
 

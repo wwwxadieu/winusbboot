@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, errorText, events } from "../lib/api";
 import type { IsoInfo, OsFamily } from "../types";
 import { bytes, duration, pct, shortPath, speed } from "../lib/format";
-import { Note, Panel, Progress } from "./ui";
+import { Note, Panel, Progress, Why } from "./ui";
 
 /**
  * Mọi thứ bước này cần biết về bản đã chọn, bất kể là Windows hay Linux.
@@ -131,19 +131,10 @@ export function StepSource({
   return (
     <>
       <div className="main__head">
-        <h1>Nguồn bộ cài</h1>
-        <p>
-          {plan
-            ? <>Cần một file ISO của <b style={{ display: "inline" }}>{plan.name}</b>. Bạn có thể chọn file có sẵn hoặc tải mới.</>
-            : "Hãy quay lại bước trước để chọn phiên bản."}
-        </p>
+        <h1>{plan ? `File ISO của ${plan.name}` : "Nguồn bộ cài"}</h1>
       </div>
 
-      {plan?.manualNote && (
-        <Note type="warn" icon="◈" title="Bản này phải tải thủ công">
-          {plan.manualNote}
-        </Note>
-      )}
+      {plan?.manualNote && <Note type="warn" icon="◈">{plan.manualNote}</Note>}
 
       {error && <Note type="danger" icon="✕" title="Không hoàn tất được">{error}</Note>}
 
@@ -152,8 +143,8 @@ export function StepSource({
           <button className="opt" onClick={pickFile} disabled={busy !== null}>
             <span className="opt__radio" />
             <span>
-              <span className="opt__title">Dùng file ISO có sẵn trên máy</span>
-              <span className="opt__desc">Cách chắc chắn nhất — chọn file .iso bạn đã tải về từ trước.</span>
+              <span className="opt__title">Chọn file ISO có sẵn trên máy</span>
+              <span className="opt__desc">File .iso bạn đã tải về từ trước.</span>
             </span>
           </button>
 
@@ -167,8 +158,9 @@ export function StepSource({
               <span>
                 <span className="opt__title">Tải tự động từ nguồn chính thức</span>
                 <span className="opt__desc">
-                  Tra tên file hiện hành trong danh sách mã băm chính thức, tải về rồi tự
-                  đối chiếu mã băm. File lưu vào thư mục riêng của ứng dụng.
+                  {family === "linux"
+                    ? "Tải rồi tự đối chiếu mã băm chính thức."
+                    : "Hỏi Microsoft link đúng phiên bản và ngôn ngữ đã chọn, rồi tải về."}
                 </span>
               </span>
             </button>
@@ -177,8 +169,8 @@ export function StepSource({
           <button className="opt" onClick={openOfficial} disabled={busy !== null || !plan}>
             <span className="opt__radio" />
             <span>
-              <span className="opt__title">Mở trang tải chính thức trong trình duyệt</span>
-              <span className="opt__desc">Tải thủ công rồi quay lại đây chọn file.</span>
+              <span className="opt__title">Mở trang tải chính thức</span>
+              <span className="opt__desc">Tải bằng trình duyệt rồi quay lại đây chọn file.</span>
             </span>
           </button>
         </div>
@@ -248,7 +240,7 @@ export function StepSource({
             <div style={{ marginTop: 12 }}>
               <Note type="warn" icon="!">
                 File ISO này không có thư mục EFI nên chỉ khởi động được ở chế độ BIOS cũ.
-                Hãy chọn kiểu phân vùng MBR ở bước ghi.
+                Ứng dụng sẽ tự chuyển kiểu phân vùng sang MBR ở bước Ghi.
               </Note>
             </div>
           )}
@@ -284,8 +276,17 @@ export function StepSource({
                   <div className="stat__note mono">Công bố chính thức: {verify.expected}</div>
                 ) : (
                   <div className="stat__note">
-                    Đối chiếu với giá trị nhà phát hành công bố trên trang tải để chắc chắn file không hỏng.
+                    {family === "windows"
+                      ? "Không có mã băm chính thức để đối chiếu."
+                      : "Hãy so với giá trị nhà phát hành công bố trên trang tải."}
                   </div>
+                )}
+                {!verify.expected && family === "windows" && (
+                  <Why label="Vì sao không đối chiếu tự động được?">
+                    Microsoft không công bố mã băm cho ISO tải qua trang của họ, nên ứng dụng
+                    không có gì để so. Giá trị trên dùng để đối chiếu với một nguồn bạn tin
+                    tưởng, hoặc để so giữa hai lần tải khác nhau.
+                  </Why>
                 )}
               </div>
             </div>

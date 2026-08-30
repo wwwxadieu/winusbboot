@@ -40,6 +40,11 @@ pub struct DriverPackage {
     pub provider: String,
     pub version: String,
     pub size: u64,
+    /// Gói này có driver mạng không. Tính ở Rust chứ không để giao diện tự so
+    /// chuỗi trong `classes`: INF viết `Class=` theo bất kỳ kiểu chữ nào — `Net`,
+    /// `NET`, `net` đều gặp thật — nên một phép so bằng ở giao diện sẽ báo "không
+    /// có mạng" cho đúng cái card Wi-Fi vừa được kèm vào.
+    pub is_network: bool,
     /// Mã phần cứng gói này khai là hỗ trợ. Chỉ dùng trong Rust để đối chiếu với
     /// thiết bị thật; danh sách này có thể dài hàng nghìn dòng nên không gửi ra
     /// giao diện.
@@ -468,6 +473,7 @@ pub fn scan(root: &Path) -> Result<DriverSet> {
 
         // Không đọc ra nhóm nào thì gói này không phân loại được — vẫn giữ, chỉ
         // là chỉ lọt qua mức "tất cả".
+        let classes: Vec<String> = classes.into_iter().collect();
         packages.push(DriverPackage {
             name: folder
                 .file_name()
@@ -476,7 +482,8 @@ pub fn scan(root: &Path) -> Result<DriverSet> {
             size: dir_size(&folder),
             folder: folder.to_string_lossy().to_string(),
             infs: names,
-            classes: classes.into_iter().collect(),
+            is_network: is_network(&classes),
+            classes,
             provider,
             version,
             hardware_ids: ids.into_iter().collect(),
@@ -542,6 +549,9 @@ fn copy_dir(from: &Path, to: &Path) -> Result<u64> {
         if ft.is_dir() {
             bytes += copy_dir(&src, &dst)?;
         } else {
+            // Gói driver của lần chép trước có thể còn đó và đang chỉ-đọc;
+            // ghi đè lên nó là "access denied".
+            crate::writer::clear_readonly(&dst);
             bytes += std::fs::copy(&src, &dst)?;
         }
     }
@@ -864,11 +874,13 @@ AX211.DeviceDesc = "Intel(R) Wi-Fi 6E AX211 160MHz"
 "#;
 
     fn pkg(name: &str, classes: &[&str], ids: &[&str]) -> DriverPackage {
+        let classes: Vec<String> = classes.iter().map(|s| s.to_string()).collect();
         DriverPackage {
             folder: format!("C:\\{name}"),
             name: name.to_string(),
             infs: vec![format!("{name}.inf")],
-            classes: classes.iter().map(|s| s.to_string()).collect(),
+            is_network: is_network(&classes),
+            classes,
             provider: String::new(),
             version: String::new(),
             size: 0,
@@ -961,6 +973,21 @@ AX211.DeviceDesc = "Intel(R) Wi-Fi 6E AX211 160MHz"
         // Card màn hình cố tình nằm ngoài cả mức khuyến nghị.
         assert!(!passes(&display, DriverFilter::Recommended));
         assert!(passes(&display, DriverFilter::All));
+    }
+
+    /// INF không quy định kiểu chữ cho `Class=`, và cả ba kiểu đều gặp ngoài đời.
+    /// Nhận nhầm ở đây nghĩa là báo "cài xong sẽ không có mạng" cho đúng cái gói
+    /// Wi-Fi vừa chọn — người dùng sẽ đi tìm một driver họ đã có.
+    #[test]
+    fn a_network_package_is_recognised_whatever_case_the_inf_uses() {
+        for c in ["Net", "NET", "net", "Bluetooth", "BLUETOOTH"] {
+            assert!(pkg("x", &[c], &[]).is_network, "{c} phải được tính là driver mạng");
+        }
+        assert!(!pkg("x", &["Display"], &[]).is_network);
+        assert!(
+            pkg("x", &["Display", "net"], &[]).is_network,
+            "một gói trộn nhiều nhóm mà có nhóm mạng thì vẫn là gói mạng"
+        );
     }
 
     #[test]

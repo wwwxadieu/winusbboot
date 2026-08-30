@@ -43,16 +43,8 @@ function CheckRow({ c }: { c: Check }) {
 }
 
 function Tally({ s }: { s: CheckSummary }) {
-  const verdict = s.failed > 0
-    ? "Máy không đáp ứng đủ yêu cầu của Windows 11. Bước gợi ý sẽ đề xuất phiên bản phù hợp hơn."
-    : s.fixable > 0
-      ? "Phần cứng đủ điều kiện, chỉ cần chỉnh vài thiết lập trong BIOS là cài được Windows 11."
-      : s.unknown > 0
-        ? "Không có mục nào không đạt. Vài mục không đọc được nhưng đều không phải rào chặn."
-        : "Máy đáp ứng đầy đủ mọi yêu cầu của Windows 11.";
-
   return (
-    <Panel title="Kết quả quét">
+    <>
       <div className="tally">
         <div>
           <div className="tally__big">
@@ -70,8 +62,6 @@ function Tally({ s }: { s: CheckSummary }) {
         </div>
       </div>
 
-      <div className="tally__verdict">{verdict}</div>
-
       <div className="legend">
         {ORDER.map((k) => {
           const n = { pass: s.passed, fixable: s.fixable, fail: s.failed, unknown: s.unknown }[k];
@@ -83,11 +73,19 @@ function Tally({ s }: { s: CheckSummary }) {
           );
         })}
       </div>
-    </Panel>
+    </>
   );
 }
 
-export function StepHardware({
+/**
+ * Chi tiết phần cứng, không có tiêu đề trang.
+ *
+ * Đây từng là một bước riêng trong luồng, nhưng nó không phải một quyết định —
+ * người dùng không *làm* gì ở đó, chỉ đọc. Một bước bắt bấm "Tiếp tục" để đi
+ * qua thứ mình chưa chắc đã muốn xem là một bước thừa. Nay khối này nằm gập
+ * lại ngay trong bước gợi ý, cạnh đúng kết luận mà nó giải thích.
+ */
+export function HardwareBlock({
   hw,
   checks,
   summary,
@@ -104,16 +102,9 @@ export function StepHardware({
 }) {
   if (!hw) {
     return (
-      <>
-        <div className="main__head"><h1>Quét phần cứng</h1></div>
-        <Panel>
-          <Empty icon="🖥" title={loading ? "Đang quét phần cứng…" : "Chưa có dữ liệu"}>
-            {loading
-              ? "Đang đọc CPU, RAM, ổ đĩa, TPM, Secure Boot, firmware, đồ hoạ và màn hình."
-              : "Bấm quét lại để thử lần nữa."}
-          </Empty>
-        </Panel>
-      </>
+      <Empty icon="🖥" title={loading ? "Đang quét phần cứng…" : "Chưa có dữ liệu"}>
+        {loading ? "Đang đọc CPU, RAM, ổ đĩa, TPM, Secure Boot và màn hình." : "Bấm quét lại để thử lần nữa."}
+      </Empty>
     );
   }
 
@@ -127,37 +118,22 @@ export function StepHardware({
 
   return (
     <>
-      <div className="main__head">
-        <h1>{machine || "Quét phần cứng"}</h1>
-        <p>
-          Từng thành phần được đối chiếu với yêu cầu chính thức của Windows 11.
-          Xanh là đạt, đỏ là không đạt, vàng là chỉ cần chỉnh thiết lập, xám là không đọc được.
-        </p>
-      </div>
+      {machine && <div className="fold__machine">{machine}</div>}
 
-      {summary ? (
-        <Tally s={summary} />
-      ) : (
-        <Note type="warn" icon="!" title="Chưa đối chiếu được yêu cầu">
-          Đọc được cấu hình máy nhưng chưa chấm được từng mục. Bấm quét lại ở cuối trang.
-        </Note>
-      )}
+      {summary && <Tally s={summary} />}
 
       {groups.map((g) => (
-        <Panel key={g} title={g}>
+        <Panel key={g} title={g} >
           {checks.filter((c) => c.group === g).map((c) => <CheckRow key={c.id} c={c} />)}
         </Panel>
       ))}
 
       {!hw.elevated && (hw.tpm.source === "device" || hw.secure_boot_source === "registry") && (
-        <Note type="info" icon="🔑" title="Đang đọc gián tiếp một số mục">
-          Windows chỉ cho phép truy vấn chi tiết TPM và Secure Boot khi ứng dụng chạy với quyền
-          quản trị. Ở quyền thường, ứng dụng lấy thông tin từ Device Manager và registry — đủ
-          chính xác để kết luận, chỉ thiếu vài chi tiết như nhà sản xuất chip.
+        <Note type="info" icon="🔑">
+          TPM và Secure Boot đang đọc gián tiếp qua Device Manager và registry — đủ để kết luận,
+          chỉ thiếu vài chi tiết.
           <div className="actions">
-            <button className="btn btn--sm" onClick={onElevate}>
-              Khởi động lại với quyền quản trị
-            </button>
+            <button className="btn btn--sm" onClick={onElevate}>Mở lại với quyền quản trị</button>
           </div>
         </Note>
       )}

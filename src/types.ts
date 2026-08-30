@@ -285,6 +285,9 @@ export interface DriverPackage {
   provider: string;
   version: string;
   size: number;
+  /** Gói này có driver mạng không — Rust quyết định, vì kiểu chữ trong `classes`
+   *  lấy nguyên từ file INF nên so chuỗi ở đây sẽ hụt. */
+  is_network: boolean;
 }
 
 export interface DriverSet {
@@ -386,7 +389,8 @@ export interface DistroRecommendation {
 export interface ResolvedIso {
   url: string;
   filename: string;
-  sha256: string;
+  /** `null` với Windows: Microsoft không công bố mã băm trong luồng tải của họ. */
+  sha256: string | null;
 }
 
 export interface RawWriteRequest {

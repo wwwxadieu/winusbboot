@@ -33,6 +33,8 @@ export const api = {
   recommendDistros: () => invoke<DistroRecommendation>("recommend_distros"),
   resolveDistroIso: (distroId: string) =>
     invoke<ResolvedIso>("resolve_distro_iso", { distroId }),
+  resolveWindowsIso: (releaseId: string, language: string) =>
+    invoke<ResolvedIso>("resolve_windows_iso", { releaseId, language }),
   writeImageRaw: (request: RawWriteRequest) => invoke<void>("write_image_raw", { request }),
   checkUsbBoot: (request: BootCheckRequest) => invoke<BootReport>("check_usb_boot", { request }),
   verifyUsbReadback: (request: BootCheckRequest) =>

@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import type { DesktopWeight, DistroCandidate, DistroRecommendation, Verdict } from "../types";
 import { bytes } from "../lib/format";
-import { Empty, Note, Panel } from "./ui";
+import { Empty, Fold, Note, Panel, Why } from "./ui";
 
 const VERDICT_LABEL: Record<Verdict, string> = {
   recommended: "Cài được ngay",
@@ -65,13 +66,14 @@ export function StepDistro({
   loading,
   chosen,
   onChoose,
-  onSeeHardware,
+  hardware,
 }: {
   rec: DistroRecommendation | null;
   loading: boolean;
   chosen: string | null;
   onChoose: (id: string) => void;
-  onSeeHardware: () => void;
+  /** Chi tiết phần cứng, gập lại ngay dưới kết luận mà nó giải thích. */
+  hardware: ReactNode;
 }) {
   if (!rec) {
     return (
@@ -96,22 +98,16 @@ export function StepDistro({
     <>
       <div className="main__head">
         <h1>Chọn bản Linux</h1>
-        <p>
-          Điểm số phản ánh mức độ hợp giữa cấu hình máy và từng bản — nặng nhất là lượng RAM
-          so với môi trường desktop, vì đó mới là thứ quyết định máy chạy mượt hay ì.
-        </p>
       </div>
 
-      <Note type={noteType} icon="◈" title="Kết luận">
-        {rec.summary}
-        <div className="actions">
-          <button className="btn btn--sm btn--ghost" onClick={onSeeHardware}>
-            Máy có {rec.ram_gb.toFixed(1)} GB RAM · {rec.architecture} — xem chi tiết phần cứng →
-          </button>
-        </div>
-      </Note>
+      <Note type={noteType} icon="◈">{rec.summary}</Note>
 
-      <Panel title="Các bản phân phối, xếp theo điểm">
+      <Fold title="Chi tiết phần cứng"
+            hint={`${rec.ram_gb.toFixed(1)} GB RAM · ${rec.architecture}`}>
+        {hardware}
+      </Fold>
+
+      <Panel title="Xếp theo mức hợp với máy này">
         <div className="grid grid--2">
           {rec.candidates.map((c) => (
             <DistroCard
@@ -167,15 +163,13 @@ export function StepDistro({
         </Panel>
       )}
 
-      <Panel title="Nguồn dữ liệu">
-        <Note type="info" icon="i">
-          Bảng phiên bản trong ứng dụng chốt ngày{" "}
-          {rec.catalog_snapshot.split("-").reverse().join("/")} và không tự đồng bộ — các dự án
-          Linux ra bản mới theo nhịp riêng. Link tải thì luôn đúng: ứng dụng tra tên file ISO
-          hiện hành từ file mã băm chính thức ngay lúc bạn bấm tải, nên bản vá nhỏ mới ra vẫn
-          tải đúng file mới.
-        </Note>
-      </Panel>
+      <Why label="Bảng phiên bản này cũ tới đâu?">
+        Danh sách bản phân phối trong ứng dụng chốt ngày{" "}
+        {rec.catalog_snapshot.split("-").reverse().join("/")} và không tự đồng bộ. Link tải thì
+        luôn đúng: tên file ISO hiện hành được tra từ file mã băm chính thức ngay lúc bạn bấm
+        tải, nên bản vá mới ra vẫn tải đúng file.
+      </Why>
+
     </>
   );
 }

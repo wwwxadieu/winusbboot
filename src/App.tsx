@@ -8,55 +8,47 @@ import type {
 import { Titlebar } from "./components/Titlebar";
 import { Note } from "./components/ui";
 import { StepOs } from "./components/StepOs";
-import { StepUsb } from "./components/StepUsb";
-import { StepHardware } from "./components/StepHardware";
+import { StepUsb, usable } from "./components/StepUsb";
+import { HardwareBlock } from "./components/StepHardware";
 import { StepRecommend } from "./components/StepRecommend";
 import { StepDistro } from "./components/StepDistro";
 import { StepSource, type SourcePlan } from "./components/StepSource";
-import { StepFormat } from "./components/StepFormat";
 import { StepWrite } from "./components/StepWrite";
 import { StepWriteRaw } from "./components/StepWriteRaw";
-import { StepDrivers } from "./components/StepDrivers";
-import { StepVerify } from "./components/StepVerify";
+import { StepFinish } from "./components/StepFinish";
 
-type StepKey =
-  | "os" | "usb" | "hardware" | "release" | "source" | "format" | "write" | "drivers" | "verify";
+type StepKey = "os" | "usb" | "release" | "source" | "write" | "finish";
 
 /**
- * Hai luồng khác nhau ở đúng một bước: Windows có Format riêng, Linux thì không
- * — ghi nguyên khối đã xoá và dựng lại ổ rồi (xem `writer::write_image_raw`).
+ * Một luồng duy nhất, sáu bước, dùng chung cho cả Windows lẫn Linux.
  *
- * Danh sách bước vì thế là dữ liệu chứ không phải một dãy số cố định: thêm bớt
- * bước chỉ cần sửa mảng, mọi thứ khác trong file này tra theo tên bước.
+ * Trước đây có hai mảng khác nhau vì Windows có bước Format riêng còn Linux thì
+ * không. Nay Format nằm trong chính thao tác ghi ở cả hai họ, nên khác biệt
+ * giữa chúng rút gọn lại thành: bước nào dựng component nào. Bốn bước từng
+ * đứng riêng — Phần cứng, Format, Driver, Kiểm tra — đều không phải chỗ người
+ * dùng ra quyết định, nên chúng nằm gọn bên trong bước mà chúng phục vụ.
  */
-const WINDOWS_FLOW: StepKey[] =
-  ["os", "usb", "hardware", "release", "source", "format", "write", "drivers", "verify"];
-const LINUX_FLOW: StepKey[] =
-  ["os", "usb", "hardware", "release", "source", "write", "verify"];
+const FLOW: StepKey[] = ["os", "usb", "release", "source", "write", "finish"];
 
 function meta(key: StepKey, family: OsFamily | null): { title: string; hint: string } {
   switch (key) {
     case "os": return { title: "Hệ điều hành", hint: "Windows hay Linux" };
     case "usb": return { title: "Ổ USB", hint: "Chọn ổ để ghi" };
-    case "hardware": return { title: "Phần cứng", hint: "Quét cấu hình máy" };
     case "release":
       return family === "linux"
         ? { title: "Bản Linux", hint: "Chọn bản phân phối" }
         : { title: "Phiên bản", hint: "Chọn bản Windows" };
     case "source": return { title: "Bộ cài", hint: "Chọn hoặc tải ISO" };
-    case "format": return { title: "Format", hint: "Xoá và chia phân vùng" };
     case "write":
       return family === "linux"
         ? { title: "Ghi ra USB", hint: "Ghi nguyên khối" }
-        : { title: "Ghi bộ cài", hint: "Chép lên USB" };
-    case "drivers": return { title: "Driver", hint: "Kèm driver vào USB" };
-    case "verify":
-      return { title: "Kiểm tra", hint: "Xác nhận boot được" };
+        : { title: "Ghi bộ cài", hint: "Xoá ổ rồi chép lên" };
+    case "finish": return { title: "Xong", hint: "Kiểm tra lại USB" };
   }
 }
 
-/** Ngôn ngữ hiển thị mặc định — phải là bản Microsoft thật sự phát hành. */
-const DEFAULT_LANGUAGE = "English (United States)";
+/** Ngôn ngữ hiển thị mặc định — phải khớp đúng tên Microsoft dùng trong API tải. */
+const DEFAULT_LANGUAGE = "English";
 
 const DEFAULT_UNATTEND: UnattendConfig = {
   enabled: true,
@@ -102,13 +94,15 @@ export default function App() {
 
   const [scheme, setScheme] = useState<PartitionScheme>("gpt_fat32");
   const [label, setLabel] = useState("WINSETUP");
+  // Kết quả format nay do bước Ghi tạo ra; giữ ở đây vì phần kèm driver ở bước
+  // cuối cần biết bộ cài nằm ở ký tự ổ nào.
   const [formatResult, setFormatResult] = useState<FormatResult | null>(null);
   const [unattend, setUnattend] = useState<UnattendConfig>(DEFAULT_UNATTEND);
 
   const [writeDone, setWriteDone] = useState(false);
   const [staged, setStaged] = useState<StageReport | null>(null);
-  // ISO đã bị dọn sau khi ghi: bước Kiểm tra vẫn đọc được cấu trúc ổ, nhưng
-  // phần đối chiếu từng byte thì cần chính file đó nên phải giải thích.
+  // ISO đã bị dọn sau khi ghi: bước cuối vẫn đọc được cấu trúc ổ, nhưng phần
+  // đối chiếu từng byte thì cần chính file đó nên phải giải thích.
   const [isoDiscarded, setIsoDiscarded] = useState(false);
 
   const [fatal, setFatal] = useState<string | null>(null);
@@ -118,7 +112,7 @@ export default function App() {
     [],
   );
 
-  // Đổi ổ USB thì kết quả format của ổ cũ không còn giá trị.
+  // Đổi ổ USB thì kết quả của ổ cũ không còn giá trị.
   useEffect(() => {
     setFormatResult(null);
     setIsoDiscarded(false);
@@ -131,8 +125,11 @@ export default function App() {
   }, [theme]);
 
   // Đổi họ hệ điều hành thì file ISO đang chọn gần như chắc chắn không dùng
-  // được nữa, và một ổ đã format theo chuẩn Windows cũng vô nghĩa với luồng
-  // Linux. Giữ lại là mời người dùng ghi nhầm.
+  // được nữa. Giữ lại là mời người dùng ghi nhầm.
+  //
+  // Chọn xong là đi luôn sang bước sau: đây là câu hỏi có đúng hai đáp án, và
+  // bấm "Tiếp tục" ngay sau khi vừa bấm "Windows" chỉ là bắt xác nhận hai lần
+  // một việc.
   const chooseFamily = useCallback((f: OsFamily) => {
     setFamily((prev) => {
       if (prev !== null && prev !== f) {
@@ -141,6 +138,7 @@ export default function App() {
       }
       return f;
     });
+    setStep("usb");
   }, []);
 
   const refreshDisks = useCallback(async () => {
@@ -240,6 +238,14 @@ export default function App() {
   const minUsbBytes =
     family === "linux" ? Math.max(distro?.iso_size ?? 0, 2 * 1024 ** 3) : WINDOWS_MIN_USB;
 
+  // Cắm đúng một chiếc USB dùng được thì không có gì để chọn — chọn sẵn hộ.
+  // Có từ hai ổ trở lên thì không: đoán hộ ở đó là đoán xem ổ nào bị xoá.
+  useEffect(() => {
+    if (selectedDisk !== null) return;
+    const fit = disks.filter((d) => usable(d, minUsbBytes));
+    if (fit.length === 1) setSelectedDisk(fit[0].number);
+  }, [disks, minUsbBytes, selectedDisk]);
+
   // Ngôn ngữ hiển thị trong autounattend.xml phải khớp ngôn ngữ của ISO: đặt
   // một ngôn ngữ không có trong ảnh đĩa thì Windows Setup bỏ qua cả file.
   const uiLocale = languages.find((l) => l.ms_name === language)?.locale ?? "en-US";
@@ -247,32 +253,30 @@ export default function App() {
     setUnattend((u) => (u.ui_language === uiLocale ? u : { ...u, ui_language: uiLocale }));
   }, [uiLocale]);
 
-  const flow = family === "linux" ? LINUX_FLOW : WINDOWS_FLOW;
-
+  // `picked` có giá trị ngay từ đầu vì bảng gợi ý đã chấm điểm xong lúc khởi
+  // động. Nhưng chưa chọn hệ điều hành thì đó chỉ là mặc định của bảng Windows,
+  // không phải lựa chọn của người dùng — đánh dấu xong ở đó là nói dối.
   const done: Record<StepKey, boolean> = {
     os: family !== null,
     usb: disk !== null,
-    hardware: hw !== null,
-    release: picked !== null,
+    release: family !== null && picked !== null,
     source: iso !== null,
-    format: formatResult !== null,
     write: writeDone,
-    drivers: staged !== null,
-    verify: false,
+    finish: false,
   };
 
   const sub: Record<StepKey, string> = {
     os: family === null ? "Chưa chọn" : family === "linux" ? "Linux" : "Windows",
     usb: disk ? `${disk.model} · ${bytes(disk.size, 0)}` : "Chưa chọn",
-    hardware: rec
-      ? `${rec.check_summary.passed}/${rec.check_summary.total} mục đạt`
-      : scanning ? "Đang quét…" : "Chưa quét",
-    release: picked ? picked.name : "Chưa chọn",
+    release: family === null
+      ? "Chưa chọn"
+      : picked ? picked.name
+      : scanning ? "Đang quét máy…" : "Chưa chọn",
     source: iso ? iso.path.split(/[\\/]/).pop() ?? "" : "Chưa chọn",
-    format: formatResult ? `Xong · ổ ${formatResult.drive_letter}:` : "Chưa format",
     write: writeDone ? "Đã ghi xong" : admin ? "Sẵn sàng" : "Cần quyền quản trị",
-    drivers: staged ? `Đã kèm ${staged.packages} gói` : writeDone ? "Tuỳ chọn" : "Chờ ghi xong",
-    verify: writeDone ? "Sẵn sàng kiểm tra" : "Chờ ghi xong",
+    finish: writeDone
+      ? staged ? `Đã kèm ${staged.packages} gói driver` : "Kiểm tra lại USB"
+      : "Chờ ghi xong",
   };
 
   // Không cho nhảy tới bước sau khi bước trước chưa xong — chặn ngay ở giao diện
@@ -282,33 +286,23 @@ export default function App() {
     if (family === null) return false;
     switch (k) {
       case "usb":
-      case "hardware":
       case "release":
         return true;
       case "source":
         return picked !== null;
-      case "format":
-        return iso !== null && disk !== null;
       case "write":
-        // Luồng Windows phải format xong mới ghi được; luồng Linux ghi nguyên
-        // khối nên chỉ cần có ổ và có file ảnh.
-        return family === "linux"
-          ? iso !== null && disk !== null
-          : formatResult !== null;
-      case "drivers":
-        // Driver được chép vào chính chiếc USB vừa ghi, nên phải ghi xong đã.
-        return writeDone;
-      case "verify":
+        // Bước ghi nay tự xoá và chia lại phân vùng, nên chỉ cần có ổ và có
+        // file ảnh là đủ điều kiện — ở cả hai họ hệ điều hành.
+        return iso !== null && disk !== null;
+      case "finish":
         // Chưa ghi xong thì không có gì để đọc lại mà kiểm tra.
         return writeDone;
     }
   };
 
-  /** Bước hiện tại có thể đã biến mất khỏi luồng sau khi người dùng đổi họ HĐH. */
-  const current = flow.includes(step) ? step : "os";
-  const at = flow.indexOf(current);
-  const next = flow[at + 1];
-  const prev = flow[at - 1];
+  const at = FLOW.indexOf(step);
+  const next = FLOW[at + 1];
+  const prev = FLOW[at - 1];
 
   const bootRequest: BootCheckRequest | null = useMemo(() => {
     if (!disk || !iso || family === null) return null;
@@ -342,21 +336,32 @@ export default function App() {
       };
     }
     if (!release) return null;
-    // Windows không có đường tải tự động. Luồng cũ dựa vào endpoint
-    // /api/controls/contentinclude/html của Microsoft, và endpoint đó đã bị gỡ
-    // — trả 404 với mọi pageId, kể cả pageId lấy từ chính trang tải hiện tại.
-    // Không có gì để bật lại, nên phần bóc link đã bỏ khỏi cả backend lẫn giao
-    // diện; ở đây chỉ còn đường dẫn trang tải để mở bằng trình duyệt.
+    // Bản doanh nghiệp không nằm trên trang tải công khai, nên không có gì để
+    // hỏi Microsoft cả — chỉ còn đường lấy từ kênh bản quyền.
+    if (release.source === "volume_license") {
+      return {
+        name: release.name,
+        officialPage: () => api.officialDownloadPage(release.id),
+        resolve: null,
+        manualNote: `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`,
+      };
+    }
     return {
       name: release.name,
       officialPage: () => api.officialDownloadPage(release.id),
-      resolve: null,
-      manualNote:
-        release.source === "volume_license"
-          ? `${release.name} không có trên trang tải công khai của Microsoft. Bạn cần lấy ISO từ Microsoft 365 admin center, Volume Licensing Service Center, hoặc Visual Studio Subscriptions.`
-          : `Microsoft không cho tải ISO trực tiếp từ ứng dụng ngoài, nên bộ cài Windows phải tải bằng trình duyệt. Bấm "Mở trang tải chính thức", chọn ${language}, tải file ISO về rồi quay lại đây chọn file.`,
+      resolve: async () => {
+        const r = await api.resolveWindowsIso(release.id, language);
+        return { url: r.url, filename: r.filename, sha256: r.sha256 };
+      },
+      manualNote: null,
     };
   }, [family, distro, release, language]);
+
+  /** Chi tiết phần cứng, dùng chung cho cả hai bảng gợi ý. */
+  const hardware = (
+    <HardwareBlock hw={hw} checks={rec?.checks ?? []} summary={rec?.check_summary ?? null}
+                   loading={scanning} onElevate={elevate} onRescan={scan} />
+  );
 
   return (
     <div className="app">
@@ -369,18 +374,18 @@ export default function App() {
       <div className="body">
         <nav className="rail">
           <div className="rail__label">Các bước</div>
-          {flow.map((k, i) => {
+          {FLOW.map((k, i) => {
             const m = meta(k, family);
             return (
               <button
                 key={k}
                 className="step"
-                aria-current={current === k}
+                aria-current={step === k}
                 data-done={done[k]}
                 disabled={!unlocked(k)}
                 onClick={() => setStep(k)}
               >
-                <span className="step__num">{done[k] && current !== k ? "✓" : i + 1}</span>
+                <span className="step__num">{done[k] && step !== k ? "✓" : i + 1}</span>
                 <span className="step__text">
                   <span className="step__title">{m.title}</span>
                   <span className="step__sub">{sub[k] || m.hint}</span>
@@ -388,12 +393,6 @@ export default function App() {
               </button>
             );
           })}
-
-          <div className="rail__foot">
-            <button className="btn btn--sm btn--ghost" onClick={scan} disabled={scanning}>
-              {scanning && <span className="spinner" />} Quét lại máy
-            </button>
-          </div>
         </nav>
 
         <main className="main">
@@ -405,62 +404,49 @@ export default function App() {
                 </Note>
               )}
 
-              {current === "os" && <StepOs family={family} onChoose={chooseFamily} />}
+              {step === "os" && <StepOs family={family} onChoose={chooseFamily} />}
 
-              {current === "usb" && (
+              {step === "usb" && (
                 <StepUsb disks={disks} selected={selectedDisk} onSelect={setSelectedDisk}
                          onRefresh={refreshDisks} loading={disksLoading} minBytes={minUsbBytes} />
               )}
 
-              {current === "hardware" && (
-                <StepHardware hw={hw} checks={rec?.checks ?? []} summary={rec?.check_summary ?? null}
-                              loading={scanning} onElevate={elevate} onRescan={scan} />
-              )}
-
-              {current === "release" && family === "linux" && (
+              {step === "release" && family === "linux" && (
                 <StepDistro rec={distros} loading={scanning} chosen={chosenDistro}
-                            onChoose={setChosenDistro} onSeeHardware={() => setStep("hardware")} />
+                            onChoose={setChosenDistro} hardware={hardware} />
               )}
-              {current === "release" && family !== "linux" && (
+              {step === "release" && family !== "linux" && (
                 <StepRecommend rec={rec} loading={scanning} chosen={chosenRelease}
                                onChoose={setChosenRelease}
                                onRefreshCatalog={refreshCatalog} refreshing={refreshingCatalog}
-                               onSeeHardware={() => setStep("hardware")}
+                               hardware={hardware}
                                languages={languages} language={language} onLanguage={setLanguage} />
               )}
 
-              {current === "source" && (
+              {step === "source" && (
                 <StepSource family={family ?? "windows"} plan={plan} iso={iso} onIso={setIso} />
               )}
 
-              {current === "format" && (
-                <StepFormat disk={disk} iso={iso} admin={admin === true}
-                            scheme={scheme} onScheme={setScheme}
-                            label={label} onLabel={setLabel}
-                            result={formatResult} onResult={setFormatResult}
-                            onAdminRelaunch={elevate} />
-              )}
-
-              {current === "write" && family === "linux" && (
+              {step === "write" && family === "linux" && (
                 <StepWriteRaw disk={disk} iso={iso} release={distro}
                               admin={admin === true} onAdminRelaunch={elevate}
                               onDone={setWriteDone} onDiscarded={() => setIsoDiscarded(true)} />
               )}
-              {current === "write" && family !== "linux" && (
-                <StepWrite disk={disk} iso={iso} scheme={scheme} label={label}
-                           format={formatResult} unattend={unattend} onUnattend={setUnattend}
+              {step === "write" && family !== "linux" && (
+                <StepWrite disk={disk} iso={iso} admin={admin === true} onAdminRelaunch={elevate}
+                           scheme={scheme} onScheme={setScheme} label={label} onLabel={setLabel}
+                           onFormatted={setFormatResult}
+                           unattend={unattend} onUnattend={setUnattend}
                            languages={languages} isoLanguage={language} onDone={setWriteDone}
                            onDiscarded={() => setIsoDiscarded(true)} />
               )}
 
-              {current === "drivers" && (
-                <StepDrivers driveLetter={formatResult?.drive_letter ?? null}
-                             admin={admin === true} onAdminRelaunch={elevate}
-                             onStaged={setStaged} />
-              )}
-
-              {current === "verify" && (
-                <StepVerify request={bootRequest} writeDone={writeDone} isoDiscarded={isoDiscarded} />
+              {step === "finish" && (
+                <StepFinish family={family ?? "windows"} request={bootRequest}
+                            writeDone={writeDone} isoDiscarded={isoDiscarded}
+                            driveLetter={formatResult?.drive_letter ?? null}
+                            admin={admin === true} onAdminRelaunch={elevate}
+                            onStaged={setStaged} staged={staged} />
               )}
 
             </div>
@@ -476,7 +462,7 @@ export default function App() {
                 ← Quay lại
               </button>
               <span className="navbar__pos">
-                Bước {at + 1}/{flow.length} · {meta(current, family).title}
+                Bước {at + 1}/{FLOW.length} · {meta(step, family).title}
               </span>
               <div className="spacer" />
               {next && (

@@ -56,7 +56,7 @@ fn l(ms_name: &str, locale: &str, label: &str) -> SetupLanguage {
 
 /// Ngôn ngữ mặc định. Có mặt trong mọi bản phát hành và là bản dễ tìm trợ giúp
 /// nhất khi gặp lỗi.
-pub const DEFAULT: &str = "English (United States)";
+pub const DEFAULT: &str = "English";
 
 /// Toàn bộ bảng: ngôn ngữ có ISO, cộng những locale chỉ dùng cho vùng/bàn phím.
 pub fn all() -> Vec<SetupLanguage> {
@@ -70,7 +70,11 @@ pub fn all() -> Vec<SetupLanguage> {
         l("Czech", "cs-CZ", "Séc"),
         l("Danish", "da-DK", "Đan Mạch"),
         l("Dutch", "nl-NL", "Hà Lan"),
-        l("English (United States)", "en-US", "Anh (Mỹ)"),
+        // Microsoft gọi bản này đúng một chữ "English" trong API tải, không phải
+        // "English (United States)". Tên ở đây phải khớp từng ký tự với thứ API
+        // trả về, vì khâu chọn SKU so bằng dấu bằng — so kiểu "bắt đầu bằng" sẽ
+        // vớ nhầm sang "English International".
+        l("English", "en-US", "Anh (Mỹ)"),
         l("English International", "en-GB", "Anh (quốc tế)"),
         l("Estonian", "et-EE", "Estonia"),
         l("Finnish", "fi-FI", "Phần Lan"),
@@ -104,28 +108,15 @@ pub fn all() -> Vec<SetupLanguage> {
     ]
 }
 
-/// Những ngôn ngữ thật sự tải được ISO.
-pub fn iso_languages() -> Vec<SetupLanguage> {
-    all().into_iter().filter(|x| !x.region_only).collect()
-}
-
-/// Tra locale của một ngôn ngữ theo tên Microsoft.
-pub fn locale_of(ms_name: &str) -> String {
-    all()
-        .into_iter()
-        .find(|x| x.ms_name.eq_ignore_ascii_case(ms_name))
-        .map(|x| x.locale)
-        .unwrap_or_else(|| "en-US".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Lý do tồn tại của cả module này.
+    /// Lý do tồn tại của cả module này. Giao diện chào ra đúng những mục
+    /// `region_only == false`, nên điều kiện phải khoá ở đây, trên bảng dữ liệu.
     #[test]
     fn vietnamese_is_never_offered_as_an_iso_language() {
-        for x in iso_languages() {
+        for x in all().into_iter().filter(|x| !x.region_only) {
             assert!(
                 !x.locale.starts_with("vi"),
                 "Microsoft không phát hành ISO tiếng Việt, nhưng {} đang được chào ra",
@@ -145,7 +136,7 @@ mod tests {
 
     #[test]
     fn the_default_language_is_actually_in_the_list() {
-        assert!(iso_languages().iter().any(|x| x.ms_name == DEFAULT));
+        assert!(all().iter().any(|x| !x.region_only && x.ms_name == DEFAULT));
     }
 
     #[test]
@@ -162,15 +153,21 @@ mod tests {
             assert!(x.locale.contains('-'), "{} không phải mã locale hợp lệ", x.locale);
             assert!(!x.keyboard.is_empty(), "{} thiếu bố cục bàn phím", x.locale);
             // region_only và ms_name phải luôn nhất quán với nhau, nếu không thì
-            // bộ lọc iso_languages() sẽ chào ra một ngôn ngữ không tải được.
+            // bộ lọc của giao diện sẽ chào ra một ngôn ngữ không tải được.
             assert_eq!(x.region_only, x.ms_name.is_empty(), "{} mâu thuẫn", x.locale);
         }
     }
 
+    /// Giao diện tra locale bằng `ms_name`, so bằng đúng từng ký tự. Trùng tên
+    /// giữa hai mục thì phép tra đó trả về mục nào là chuyện may rủi.
     #[test]
-    fn locale_lookup_falls_back_instead_of_panicking() {
-        assert_eq!(locale_of("Japanese"), "ja-JP");
-        assert_eq!(locale_of("japanese"), "ja-JP");
-        assert_eq!(locale_of("Klingon"), "en-US");
+    fn iso_names_are_unique_so_the_locale_lookup_is_unambiguous() {
+        let all = all();
+        let mut names: Vec<&str> =
+            all.iter().filter(|x| !x.region_only).map(|x| x.ms_name.as_str()).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "tên ISO bị trùng");
     }
 }
