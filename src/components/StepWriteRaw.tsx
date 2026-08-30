@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorText, events } from "../lib/api";
 import type { DistroRelease, IsoInfo, UsbDisk, WriteProgress } from "../types";
-import { bytes, pct } from "../lib/format";
+import { bytes, pct, rateLine } from "../lib/format";
 import { Note, Panel, Progress } from "./ui";
 
 const STAGE_NAME: Record<string, string> = {
@@ -43,6 +43,13 @@ export function StepWriteRaw({
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prog, setProg] = useState<WriteProgress | null>(null);
+  // Nút bắt đầu ghi nằm cuối trang, còn thanh tiến trình nằm trên đầu — bấm
+  // xong mà không cuộn lên thì người dùng nhìn vào một trang không có gì thay
+  // đổi và tưởng chưa chạy. Cuộn giúp họ đúng một lần, lúc bắt đầu.
+  const progRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (running) progRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [running]);
   // Chỉ dọn được file do ứng dụng tự tải; file người dùng tự chọn là của họ.
   const [cleanup, setCleanup] = useState(true);
   const [discarded, setDiscarded] = useState<string | null>(null);
@@ -117,6 +124,18 @@ export function StepWriteRaw({
           3–15 phút tuỳ tốc độ USB.
         </p>
       </div>
+      <div ref={progRef} />
+      {(running || prog) && !done && (
+        <Panel title={`Bước ${prog?.stage_index ?? 1}/${prog?.total_stages ?? 3} · ${STAGE_NAME[prog?.stage ?? "check"] ?? ""}`}>
+          <Progress
+            value={prog?.percent ?? 0}
+            left={prog?.message ?? "Đang bắt đầu…"}
+            right={prog ? rateLine(prog) : pct(0)}
+            file={prog?.detail ?? null}
+            busy={running && (prog?.percent ?? 0) === 0}
+          />
+        </Panel>
+      )}
 
       {!admin && (
         <Note type="warn" icon="🔑" title="Cần quyền quản trị">
@@ -189,18 +208,6 @@ export function StepWriteRaw({
           <span>Tôi đã sao lưu dữ liệu và xác nhận ghi đè đúng ổ này.</span>
         </label>
       </Note>
-
-      {(running || prog) && !done && (
-        <Panel title={`Bước ${prog?.stage_index ?? 1}/${prog?.total_stages ?? 3} · ${STAGE_NAME[prog?.stage ?? "check"] ?? ""}`}>
-          <Progress
-            value={prog?.percent ?? 0}
-            left={prog?.message ?? "Đang bắt đầu…"}
-            right={pct(prog?.percent ?? 0)}
-            file={prog?.detail ?? null}
-            busy={running && (prog?.percent ?? 0) === 0}
-          />
-        </Panel>
-      )}
 
       {error && <Note type="danger" icon="✕" title="Ghi USB thất bại">{error}</Note>}
 

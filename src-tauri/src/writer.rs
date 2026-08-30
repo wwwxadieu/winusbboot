@@ -88,6 +88,13 @@ pub struct WriteProgress {
     pub percent: f64,
     pub message: String,
     pub detail: Option<String>,
+    /// Số byte và tốc độ của chặng đang chạy.
+    ///
+    /// Phẳng vào cùng một object để giao diện chỉ phải đọc một hình dạng duy
+    /// nhất. Chặng nào không đếm byte thì mọi giá trị là 0, và `speed_bps == 0`
+    /// chính là dấu hiệu để giao diện ẩn phần tốc độ đi.
+    #[serde(flatten)]
+    pub rate: crate::rate::Throughput,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +279,8 @@ where
             percent: pct,
             message: msg,
             detail: None,
+            // Bước format không chép byte nào nên không có tốc độ để báo.
+            rate: Default::default(),
         });
     };
 
@@ -339,6 +348,11 @@ pub async fn write_iso<F>(req: WriteRequest, mut on_progress: F) -> Result<()>
 where
     F: FnMut(WriteProgress) + Send,
 {
+    // Ô nhớ dùng-một-lần cho số liệu tốc độ: chặng nào đếm được byte thì đặt
+    // giá trị vào đây ngay trước khi gọi `emit`, và `take()` xoá nó đi luôn.
+    // Nhờ vậy hơn ba mươi chỗ gọi `emit` của các chặng không đếm byte giữ
+    // nguyên được hình dạng cũ, thay vì phải thêm một tham số rỗng ở khắp nơi.
+    let tp = crate::rate::Slot::default();
     let mut emit = |stage: &'static str, idx: u32, pct: f64, msg: String, detail: Option<String>| {
         on_progress(WriteProgress {
             stage: stage.to_string(),
@@ -347,6 +361,7 @@ where
             percent: pct,
             message: msg,
             detail,
+            rate: tp.take(),
         });
     };
 
@@ -380,7 +395,7 @@ where
     }
 
     // Từ đây trở đi mọi lỗi đều phải tháo ISO ra trước khi thoát.
-    let result = copy_inner(&req, &iso, &src_letter, &dst_letter, &mut emit).await;
+    let result = copy_inner(&req, &iso, &src_letter, &dst_letter, &mut emit, &tp).await;
     let _ = ps::run(&SCRIPT_DISMOUNT.replace("%%ISO%%", &escape(&req.iso_path))).await;
     result
 }
@@ -391,6 +406,7 @@ async fn copy_inner<F>(
     src_letter: &str,
     dst_letter: &str,
     emit: &mut F,
+    tp: &crate::rate::Slot,
 ) -> Result<()>
 where
     F: FnMut(&'static str, u32, f64, String, Option<String>) + Send,
@@ -409,6 +425,7 @@ where
     let mut copied: u64 = 0;
     let mut total: u64 = 1;
     let mut last_emit = std::time::Instant::now();
+    let mut rate = crate::rate::Rate::new();
 
     ps::run_streaming(&copy_script, |line| {
         let line = line.trim();
@@ -420,7 +437,9 @@ where
             let name = parts.next().unwrap_or("").to_string();
             // Giới hạn nhịp báo để không dội hàng nghìn sự kiện lên giao diện.
             if last_emit.elapsed().as_millis() >= 120 {
-                last_emit = std::time::Instant::now();
+                let now = std::time::Instant::now();
+                last_emit = now;
+                tp.set(rate.sample(now, copied, total));
                 emit(
                     "copy",
                     3,
@@ -443,10 +462,13 @@ where
             .replace("%%DST%%", dst_letter);
 
         let mut last_split = std::time::Instant::now();
+        let mut split_rate = crate::rate::Rate::new();
         ps::run_streaming(&split_script, |line| {
             let Some((written, total)) = parse_pair(line, "GWU:SPLIT ") else { return };
             if last_split.elapsed().as_millis() >= 300 {
-                last_split = std::time::Instant::now();
+                let now = std::time::Instant::now();
+                last_split = now;
+                tp.set(split_rate.sample(now, written, total.max(1)));
                 emit(
                     "split",
                     4,
@@ -838,6 +860,7 @@ pub async fn write_image_raw<F>(req: RawWriteRequest, mut on_progress: F) -> Res
 where
     F: FnMut(WriteProgress) + Send,
 {
+    let tp = crate::rate::Slot::default();
     let mut emit = |stage: &'static str, idx: u32, pct: f64, msg: String, detail: Option<String>| {
         on_progress(WriteProgress {
             stage: stage.to_string(),
@@ -846,6 +869,7 @@ where
             percent: pct,
             message: msg,
             detail,
+            rate: tp.take(),
         });
     };
 
@@ -881,13 +905,16 @@ where
 
     let mut last_emit = std::time::Instant::now();
     let mut written: u64 = 0;
+    let mut rate = crate::rate::Rate::new();
 
     ps::run_streaming(&script, |line| {
         let Some((done, total)) = parse_pair(line, "GWU:RAW ") else { return };
         written = done;
         // Giới hạn nhịp báo để không dội hàng nghìn sự kiện lên giao diện.
         if last_emit.elapsed().as_millis() >= 150 {
-            last_emit = std::time::Instant::now();
+            let now = std::time::Instant::now();
+            last_emit = now;
+            tp.set(rate.sample(now, done, total.max(1)));
             emit(
                 "raw",
                 2,

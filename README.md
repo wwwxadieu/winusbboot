@@ -306,6 +306,35 @@ Vài chi tiết nhỏ nhưng cần thiết, mỗi cái đều có test khoá l�
   cài được. Im lặng bỏ qua thì người dùng tưởng đã xong.
 - Tên thư mục trùng nhau được đánh số, và ký tự lạ bị thay bằng `_` trước khi chép sang FAT32.
 
+### Tốc độ ghi đo bằng cửa sổ trượt
+
+Ghi ra USB không chảy đều: chép mấy file nhỏ thì xong tức thì, tới lúc ổ đẩy bộ đệm ra bộ nhớ
+flash thì đứng im vài giây. Lấy hiệu hai mẫu liền nhau sẽ cho ra một con số nhảy loạn giữa 0 và
+vài trăm MB/s — vô dụng với người đang ngồi nhìn màn hình, và tệ hơn là hiện "0 B/s" đúng lúc
+ổ đang bận nhất khiến người dùng tưởng máy treo.
+
+Nên tốc độ tính trên **cửa sổ trượt ba giây**: tổng số byte tăng thêm trong ba giây gần nhất
+chia cho đúng khoảng thời gian đó. Một nhịp khựng không làm con số rơi về 0, còn chậm hẳn thì
+vẫn thấy ngay khi cửa sổ trượt qua đoạn nhanh. Dưới 400 ms thì không báo gì cả: khoảng thời
+gian quá ngắn để chia, sai số đồng hồ lấn át phép đo, và một con số bịa ra từ vài chục mili
+giây đầu còn tệ hơn là chưa có số.
+
+Đo ở cả ba chỗ thật sự đếm được byte: chép bộ cài Windows, tách `install.wim`, và ghi nguyên
+khối cho Linux — cộng thêm phần đọc lại từng byte ở bước Kiểm tra. Bước Format và phần đối
+chiếu theo *số file* thì không có byte nào để đo, và `speed_bps == 0` chính là dấu hiệu để giao
+diện ẩn phần tốc độ đi thay vì hiện một con số vô nghĩa.
+
+Chi tiết đáng nói về cách nối vào mã cũ: hàm ghi báo tiến trình qua một closure `emit` dùng
+chung cho hơn ba mươi chỗ gọi, mà chỉ ba trong số đó đếm được byte. Thêm một tham số tốc độ vào
+closure nghĩa là sửa cả ba mươi chỗ để truyền một giá trị rỗng. Thay vào đó có `rate::Slot` —
+một ô nhớ dùng-một-lần: chặng nào đo được thì đặt số liệu vào ngay trước khi gọi `emit`, và
+`emit` lấy ra bằng `take()` nên ô nhớ trở lại rỗng, số liệu không bao giờ dính sang lần báo sau.
+Có test khoá đúng tính chất đó.
+
+Thanh tiến trình cũng chuyển lên ngay dưới tiêu đề bước, và trang tự cuộn tới nó khi bắt đầu
+ghi. Trước đây nó nằm cuối trang: bấm nút xong màn hình không có gì thay đổi, người dùng phải
+tự cuộn xuống mới biết là đang chạy.
+
 ### Script PowerShell là chuỗi ký tự cho tới lúc chạy
 
 Toàn bộ thao tác với đĩa đi qua PowerShell, và với Rust thì mỗi script chỉ là một chuỗi ký
@@ -366,6 +395,7 @@ trên; dưới 720px chiều cao thì cắt bớt khoảng đệm; từ 1900px t
 ```
 src-tauri/src/
   ps.rs         Cầu nối PowerShell (EncodedCommand, đọc stdout theo dòng, kiểm tra quyền admin)
+  rate.rs       Đo tốc độ ghi bằng cửa sổ trượt và thời gian còn lại
   usb.rs        Nhận diện ổ USB + vòng theo dõi cắm/rút
   hardware.rs   Quét CPU/RAM/TPM/Secure Boot/firmware
   cpu.rs        Suy luận CPU có nằm trong danh sách hỗ trợ Windows 11 không
