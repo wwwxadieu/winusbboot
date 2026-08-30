@@ -263,6 +263,55 @@ export interface DownloadProgress {
   eta_secs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Driver kèm theo USB
+// ---------------------------------------------------------------------------
+
+/** Mức lọc theo nhóm thiết bị. Hẹp hơn thì an toàn hơn, rộng hơn thì đủ hơn. */
+export type DriverFilter = "essential" | "recommended" | "all";
+
+/** Một gói driver — đơn vị là cả thư mục chứa file .inf, không phải từng file. */
+export interface DriverPackage {
+  folder: string;
+  name: string;
+  infs: string[];
+  classes: string[];
+  provider: string;
+  version: string;
+  size: number;
+}
+
+export interface DriverSet {
+  source: string;
+  packages: DriverPackage[];
+  total_size: number;
+  /** Thư mục chỉ có .exe/.msi — Windows Setup không nhồi được vào ảnh cài. */
+  installer_only: number;
+}
+
+/** Một thiết bị của máy, kèm kết luận bộ driver đã chọn có phủ được hay không. */
+export interface DeviceMatch {
+  name: string;
+  kind: "wifi" | "ethernet" | "bluetooth" | "storage";
+  hardware_id: string;
+  covered_by: string | null;
+}
+
+export interface DriverAnalysis {
+  set: DriverSet;
+  selected: string[];
+  selected_size: number;
+  devices: DeviceMatch[];
+  /** `false` nghĩa là không đọc được danh sách thiết bị, không phải máy không có. */
+  devices_read: boolean;
+}
+
+export interface StageReport {
+  dest: string;
+  packages: number;
+  bytes: number;
+}
+
 export interface AppError { code: string; message: string }
 
 // ---------------------------------------------------------------------------

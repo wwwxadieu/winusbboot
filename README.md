@@ -20,6 +20,7 @@ tham số. Xem "Vì sao ISO Linux phải ghi nguyên khối" bên dưới.
 | Cài đặt tự động | `autounattend.xml` | Không có |
 | Ổ USB tối thiểu | 8 GB | Vừa đúng cỡ file ISO |
 | Kiểm tra sau khi ghi | Đối chiếu từng file với ISO | Băm lại từng byte đã ghi |
+| Kèm driver | Có, qua `$WinPEDriver$` | Không cần — driver nằm trong nhân |
 
 **1. Nhận diện USB** — một tiến trình PowerShell chạy nền suốt vòng đời ứng dụng, cứ 3 giây
 in danh sách ổ USB dưới dạng JSON. Rust đọc từng dòng và chỉ đẩy sự kiện lên giao diện khi
@@ -79,7 +80,13 @@ bên trong một nút "tạo USB" chung.
 `autounattend.xml`. Tiến trình hiện theo byte thực tế ở cả sáu chặng, kể cả khi đang chép
 một file 5 GB đơn lẻ.
 
-**7. Kiểm tra khởi động** — đọc lại chính chiếc USB vừa ghi. Xem "Vì sao cần bước kiểm tra"
+**7. Driver kèm theo USB** *(tuỳ chọn, chỉ luồng Windows)* — xuất driver của chính máy đang
+chạy, hoặc chọn một thư mục driver có sẵn, rồi chép vào USB để Windows Setup tự cài trong lúc
+cài máy. Ứng dụng đối chiếu từng card mạng và ổ đĩa của máy với mã phần cứng khai trong các
+file `.inf` để nói thẳng: card Wi-Fi này **đã có** driver trong bộ sắp chép, hay chưa.
+Xem "Kèm driver để cài xong là có Wi-Fi" bên dưới.
+
+**8. Kiểm tra khởi động** — đọc lại chính chiếc USB vừa ghi. Xem "Vì sao cần bước kiểm tra"
 bên dưới.
 
 ### Vì sao cần bước kiểm tra
@@ -252,6 +259,53 @@ File này chủ ý **không** chứa `DiskConfiguration`. Thêm vào thì Setup 
 ổ cứng đích mà không hỏi lại lần nào — quá nguy hiểm cho một công cụ mà người dùng có thể
 cắm nhầm máy. Có hẳn một test khoá điều này lại để lần mở rộng sau không vô tình thêm vào.
 
+### Kèm driver để cài xong là có Wi-Fi
+
+Đây là vòng luẩn quẩn quen thuộc: cài lại Windows xong thì máy mất Wi-Fi, mà muốn tải driver
+Wi-Fi thì lại cần Wi-Fi. Chỉ phá được bằng cách đưa driver lên USB từ trước.
+
+**Cách đưa driver vào.** Windows Setup tự tìm thư mục tên `$WinPEDriver$` ở gốc ổ đĩa rời và
+cài mọi driver trong đó vào ảnh Windows đang cài. Không phải sửa bộ cài, và quan trọng hơn:
+không phải biết ổ USB sẽ mang chữ cái nào lúc WinPE chạy. Đường còn lại — khai `DriverPaths`
+trong `autounattend.xml` — bắt buộc ghi một đường dẫn tuyệt đối kiểu `E:\Drivers`, mà chữ cái
+đó thì không ai đoán trước được, nên ứng dụng không dùng.
+
+**Driver lấy từ đâu.** Hai nguồn, cùng một cỗ máy phân tích phía sau:
+
+- **Xuất từ chính máy đang chạy** (`Export-WindowsDriver -Online`, cần quyền quản trị). Đây là
+  nguồn đáng tin nhất khi người dùng cài lại chính chiếc máy của mình: không phải đoán model,
+  không phụ thuộc trang tải nào còn sống. Cũng khớp đúng giả định mà cả engine gợi ý đang dựa
+  vào — máy đang dùng chính là máy sắp cài.
+- **Một thư mục driver có sẵn** người dùng tự tải về và giải nén. Ứng dụng tự tìm mọi `.inf`
+  bên trong, kể cả nằm sâu nhiều tầng.
+
+**Lọc theo nhóm, và vì sao phải lọc.** Đánh đổi của `$WinPEDriver$` là Setup cài *tất cả*
+driver trong thư mục, bất kể máy có thiết bị đó hay không. Nên bộ lọc ở đây không phải để tiết
+kiệm dung lượng mà để giảm rủi ro — một driver điều khiển ổ đĩa sai có thể làm máy không khởi
+động được. Ba mức: chỉ mạng và ổ đĩa; khuyến nghị (thêm chipset, USB, bàn phím, chuột, âm
+thanh); tất cả. Card đồ hoạ cố ý nằm ngoài mức khuyến nghị: đó là nhóm hay gây lỗi nhất khi bị
+nhồi sẵn, mà thiếu nó thì Windows vẫn chạy bằng driver cơ bản rồi tự cập nhật sau.
+
+**Đối chiếu với phần cứng thật.** Phần đáng giá nhất của bước này không phải việc chép file mà
+là câu trả lời "chiếc USB này có driver cho card Wi-Fi của tôi hay không". Ứng dụng bóc mã phần
+cứng (`PCI\VEN_8086&DEV_51F0&SUBSYS_00748086`) từ các section models trong file `.inf`, đọc mã
+phần cứng thật của từng card mạng và ổ đĩa qua `Get-PnpDeviceProperty`, rồi so hai bên. So xuôi
+một chiều — mã thiết bị bắt đầu bằng mã trong INF — nên bắt được trường hợp Windows báo thêm
+đuôi `&REV_01` mà INF không ghi, nhưng **không** nhận nhầm một INF khai `SUBSYS` của hãng khác:
+Windows sẽ không cài nó, nên ứng dụng cũng không được nói là đã có.
+
+Vài chi tiết nhỏ nhưng cần thiết, mỗi cái đều có test khoá lại:
+
+- Đơn vị chép là **cả thư mục** chứa `.inf`, không phải từng file: thiếu `.sys` hay `.cat` nằm
+  cạnh là Setup từ chối cài vì chữ ký không khớp.
+- INF có thể là UTF-16LE, UTF-8, hay một bảng mã 8-bit đời cũ. Đoán sai bảng mã thì không đọc
+  ra nổi dòng `Class=` và gói driver đúng bị loại vì tưởng là không đọc được.
+- Nhiều INF chỉ ghi `ClassGuid` mà không ghi `Class`, nên có bảng tra GUID sang tên nhóm.
+- Thư mục chỉ chứa `.exe`/`.msi` được **đếm riêng và nói ra**. Đây là hiểu lầm phổ biến nhất:
+  tải "driver Wi-Fi" từ trang hãng và nhận về một file cài đặt — thứ Setup không nhồi vào ảnh
+  cài được. Im lặng bỏ qua thì người dùng tưởng đã xong.
+- Tên thư mục trùng nhau được đánh số, và ký tự lạ bị thay bằng `_` trước khi chép sang FAT32.
+
 ### Khung giao diện co theo cửa sổ
 
 Ba thay đổi nhỏ giải quyết phần lớn chuyện bố cục ở các cỡ cửa sổ khác nhau:
@@ -290,13 +344,14 @@ src-tauri/src/
   checks.rs     Đối chiếu 13 thành phần phần cứng với yêu cầu Windows 11
   recommend.rs  Engine chấm điểm và xếp hạng
   download.rs   Giải link ISO Linux + tải có tiến trình, có resume, tính SHA-256
+  drivers.rs    Đọc file INF, lọc theo nhóm, đối chiếu mã phần cứng, chép vào USB
   writer.rs     Format ổ, chép file, tách install.wim, ghi bootsect, ghi nguyên khối
   verify.rs     Kiểm tra USB sau khi ghi: cấu trúc khởi động + đọc lại đối chiếu
   unattend.rs   Sinh autounattend.xml để bỏ qua màn hình cài đặt ban đầu
   lib.rs        Các lệnh Tauri và vòng theo dõi nền
 
 src/
-  App.tsx           Máy trạng thái theo tên bước; luồng Windows 8 bước, Linux 7
+  App.tsx           Máy trạng thái theo tên bước; luồng Windows 9 bước, Linux 7
   types.ts          Khớp 1-1 với struct Rust
   lib/api.ts        Bọc invoke + listen
   components/       Titlebar, các màn hình bước, các mảnh dùng chung
@@ -436,6 +491,9 @@ Chưa kiểm chứng được (môi trường dựng ứng dụng không có Win
   đầu trên máy Windows
 - Các đoạn PowerShell chạy trên máy thật, **kể cả đoạn ghi nguyên khối và đoạn đọc lại
   `\\.\PHYSICALDRIVE<n>`** — hãy thử trên một ổ USB không chứa dữ liệu quan trọng
+- Việc xuất driver (`Export-WindowsDriver`) và đọc mã phần cứng (`Get-PnpDeviceProperty`).
+  Phần phân tích INF và đối chiếu mã thì chạy được ở mọi nơi và có test; phần gọi Windows thì
+  chưa
 - Đường tải tự động của các bản Linux trên máy người dùng thật. Máy dựng bị `releases.ubuntu.com`
   trả 403 (Canonical chặn dải IP trung tâm dữ liệu), nên phần này chỉ kiểm chứng được tới mức
   giải link và mã băm; giao diện luôn có sẵn hai đường lui: chọn file ISO có sẵn, và mở trang

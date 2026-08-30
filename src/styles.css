@@ -495,9 +495,15 @@ code {
   border-color: transparent; color: #fff;
   box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--accent) 90%, transparent);
 }
-.btn--primary:hover:not(:disabled) { filter: brightness(1.08); }
+/* Phải lặp lại `background` ở đây. Không có nó thì `.btn:hover:not(:disabled)`
+   — độ ưu tiên cao hơn `.btn--primary` — đè nền kính xám lên, và nút chính mất
+   sạch màu ngay khi người dùng đưa chuột tới, đúng lúc cần nó nổi bật nhất. */
+.btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  filter: brightness(1.08);
+}
 .btn--danger { background: var(--danger); border-color: transparent; color: #fff; }
-.btn--danger:hover:not(:disabled) { filter: brightness(1.1); }
+.btn--danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.1); }
 .btn--ghost { background: transparent; }
 .btn--sm { padding: 6px 12px; font-size: 12px; }
 .btn--icon { padding: 7px; width: 32px; }

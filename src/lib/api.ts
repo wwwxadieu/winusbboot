@@ -4,8 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BootCheckRequest, BootReport, CatalogState, DistroRecommendation,
-  DownloadProgress, FormatRequest, FormatResult, HardwareReport, IsoInfo, RawWriteRequest,
-  Recommendation, ResolvedIso, ReadbackResult, SetupLanguage, UnattendConfig, UsbDisk,
+  DownloadProgress, DriverAnalysis, DriverFilter, FormatRequest, FormatResult, HardwareReport, IsoInfo, RawWriteRequest,
+  Recommendation, ResolvedIso, ReadbackResult, SetupLanguage, StageReport, UnattendConfig, UsbDisk,
   WriteProgress,
   WriteRequest,
 } from "../types";
@@ -38,6 +38,13 @@ export const api = {
   verifyUsbReadback: (request: BootCheckRequest) =>
     invoke<ReadbackResult>("verify_usb_readback", { request }),
   previewUnattend: (config: UnattendConfig) => invoke<string | null>("preview_unattend", { config }),
+  driverExportDir: () => invoke<string>("driver_export_dir"),
+  exportSystemDrivers: () => invoke<string>("export_system_drivers"),
+  analyseDrivers: (path: string, filter: DriverFilter) =>
+    invoke<DriverAnalysis>("analyse_drivers", { path, filter }),
+  stageDrivers: (path: string, filter: DriverFilter, driveLetter: string) =>
+    invoke<StageReport>("stage_drivers", { path, filter, driveLetter }),
+  discardDriverExport: () => invoke<boolean>("discard_driver_export"),
 };
 
 export const events = {
@@ -55,6 +62,12 @@ export const events = {
     listen<WriteProgress>("verify://progress", (e) => cb(e.payload)),
   onCatalogUpdated: (cb: (s: CatalogState) => void): Promise<UnlistenFn> =>
     listen<CatalogState>("catalog://updated", (e) => cb(e.payload)),
+  // Hai sự kiện driver gửi tuple thay vì object: chúng chỉ mang đúng vài con số.
+  onDriverExport: (cb: (done: number, total: number) => void): Promise<UnlistenFn> =>
+    listen<[number, number]>("drivers://export", (e) => cb(e.payload[0], e.payload[1])),
+  onDriverCopy: (cb: (done: number, total: number, name: string) => void): Promise<UnlistenFn> =>
+    listen<[number, number, string]>("drivers://copy", (e) =>
+      cb(e.payload[0], e.payload[1], e.payload[2])),
 };
 
 /** Lỗi từ backend là `{ code, message }`; ở đây quy về một chuỗi để hiển thị. */

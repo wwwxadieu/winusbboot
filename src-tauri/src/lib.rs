@@ -6,6 +6,7 @@ mod checks;
 mod cpu;
 mod distro;
 mod download;
+mod drivers;
 mod error;
 mod hardware;
 mod languages;
@@ -236,6 +237,62 @@ fn preview_unattend(config: unattend::UnattendConfig) -> Option<String> {
     unattend::generate(&config)
 }
 
+// ---------------------------------------------------------------------------
+// Driver kèm theo USB
+// ---------------------------------------------------------------------------
+
+/// Thư mục ứng dụng xuất driver của máy hiện tại.
+#[tauri::command]
+fn driver_export_dir() -> String {
+    drivers::export_dir().to_string_lossy().to_string()
+}
+
+/// Xuất driver của chính máy đang chạy. Cần quyền quản trị và mất vài phút.
+#[tauri::command]
+async fn export_system_drivers(app: AppHandle) -> Result<String> {
+    let handle = app.clone();
+    let dir = drivers::export_this_pc(move |done, total| {
+        let _ = handle.emit("drivers://export", (done, total));
+    })
+    .await?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Quét một thư mục driver rồi đối chiếu với thiết bị thật của máy.
+#[tauri::command]
+async fn analyse_drivers(
+    path: String,
+    filter: drivers::DriverFilter,
+) -> Result<drivers::DriverAnalysis> {
+    drivers::analyse(std::path::Path::new(&path), filter).await
+}
+
+/// Chép các gói driver hợp lệ vào `<ổ>:\$WinPEDriver$` trên USB.
+#[tauri::command]
+async fn stage_drivers(
+    app: AppHandle,
+    path: String,
+    filter: drivers::DriverFilter,
+    drive_letter: String,
+) -> Result<drivers::StageReport> {
+    let handle = app.clone();
+    drivers::stage_to_usb(
+        std::path::Path::new(&path),
+        filter,
+        &drive_letter,
+        move |done, total, name| {
+            let _ = handle.emit("drivers://copy", (done, total, name.to_string()));
+        },
+    )
+    .await
+}
+
+/// Xoá thư mục xuất tạm sau khi đã chép xong sang USB.
+#[tauri::command]
+fn discard_driver_export() -> Result<bool> {
+    drivers::discard_export()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -317,6 +374,11 @@ pub fn run() {
             check_usb_boot,
             verify_usb_readback,
             preview_unattend,
+            driver_export_dir,
+            export_system_drivers,
+            analyse_drivers,
+            stage_drivers,
+            discard_driver_export,
         ])
         .run(tauri::generate_context!())
         .expect("không khởi chạy được ứng dụng");

@@ -3,7 +3,7 @@ import { api, errorText, events } from "./lib/api";
 import { bytes } from "./lib/format";
 import type {
   BootCheckRequest, DistroRecommendation, FormatResult, HardwareReport, IsoInfo, OsFamily,
-  PartitionScheme, Recommendation, SetupLanguage, UnattendConfig, UsbDisk,
+  PartitionScheme, Recommendation, SetupLanguage, StageReport, UnattendConfig, UsbDisk,
 } from "./types";
 import { Titlebar } from "./components/Titlebar";
 import { Note } from "./components/ui";
@@ -16,10 +16,11 @@ import { StepSource, type SourcePlan } from "./components/StepSource";
 import { StepFormat } from "./components/StepFormat";
 import { StepWrite } from "./components/StepWrite";
 import { StepWriteRaw } from "./components/StepWriteRaw";
+import { StepDrivers } from "./components/StepDrivers";
 import { StepVerify } from "./components/StepVerify";
 
 type StepKey =
-  | "os" | "usb" | "hardware" | "release" | "source" | "format" | "write" | "verify";
+  | "os" | "usb" | "hardware" | "release" | "source" | "format" | "write" | "drivers" | "verify";
 
 /**
  * Hai luồng khác nhau ở đúng một bước: Windows có Format riêng, Linux thì không
@@ -29,7 +30,7 @@ type StepKey =
  * bước chỉ cần sửa mảng, mọi thứ khác trong file này tra theo tên bước.
  */
 const WINDOWS_FLOW: StepKey[] =
-  ["os", "usb", "hardware", "release", "source", "format", "write", "verify"];
+  ["os", "usb", "hardware", "release", "source", "format", "write", "drivers", "verify"];
 const LINUX_FLOW: StepKey[] =
   ["os", "usb", "hardware", "release", "source", "write", "verify"];
 
@@ -48,6 +49,7 @@ function meta(key: StepKey, family: OsFamily | null): { title: string; hint: str
       return family === "linux"
         ? { title: "Ghi ra USB", hint: "Ghi nguyên khối" }
         : { title: "Ghi bộ cài", hint: "Chép lên USB" };
+    case "drivers": return { title: "Driver", hint: "Kèm driver vào USB" };
     case "verify":
       return { title: "Kiểm tra", hint: "Xác nhận boot được" };
   }
@@ -104,6 +106,7 @@ export default function App() {
   const [unattend, setUnattend] = useState<UnattendConfig>(DEFAULT_UNATTEND);
 
   const [writeDone, setWriteDone] = useState(false);
+  const [staged, setStaged] = useState<StageReport | null>(null);
   // ISO đã bị dọn sau khi ghi: bước Kiểm tra vẫn đọc được cấu trúc ổ, nhưng
   // phần đối chiếu từng byte thì cần chính file đó nên phải giải thích.
   const [isoDiscarded, setIsoDiscarded] = useState(false);
@@ -119,6 +122,7 @@ export default function App() {
   useEffect(() => {
     setFormatResult(null);
     setIsoDiscarded(false);
+    setStaged(null);
   }, [selectedDisk]);
 
   useEffect(() => {
@@ -253,6 +257,7 @@ export default function App() {
     source: iso !== null,
     format: formatResult !== null,
     write: writeDone,
+    drivers: staged !== null,
     verify: false,
   };
 
@@ -266,6 +271,7 @@ export default function App() {
     source: iso ? iso.path.split(/[\\/]/).pop() ?? "" : "Chưa chọn",
     format: formatResult ? `Xong · ổ ${formatResult.drive_letter}:` : "Chưa format",
     write: writeDone ? "Đã ghi xong" : admin ? "Sẵn sàng" : "Cần quyền quản trị",
+    drivers: staged ? `Đã kèm ${staged.packages} gói` : writeDone ? "Tuỳ chọn" : "Chờ ghi xong",
     verify: writeDone ? "Sẵn sàng kiểm tra" : "Chờ ghi xong",
   };
 
@@ -289,6 +295,9 @@ export default function App() {
         return family === "linux"
           ? iso !== null && disk !== null
           : formatResult !== null;
+      case "drivers":
+        // Driver được chép vào chính chiếc USB vừa ghi, nên phải ghi xong đã.
+        return writeDone;
       case "verify":
         // Chưa ghi xong thì không có gì để đọc lại mà kiểm tra.
         return writeDone;
@@ -442,6 +451,12 @@ export default function App() {
                            format={formatResult} unattend={unattend} onUnattend={setUnattend}
                            languages={languages} isoLanguage={language} onDone={setWriteDone}
                            onDiscarded={() => setIsoDiscarded(true)} />
+              )}
+
+              {current === "drivers" && (
+                <StepDrivers driveLetter={formatResult?.drive_letter ?? null}
+                             admin={admin === true} onAdminRelaunch={elevate}
+                             onStaged={setStaged} />
               )}
 
               {current === "verify" && (
