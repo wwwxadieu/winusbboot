@@ -62,6 +62,9 @@ const DEFAULT_UNATTEND: UnattendConfig = {
   skip_oobe: true,
   bypass_requirements: false,
   arch: "amd64",
+  // Không chọn hộ bản Windows: một ISO multi-edition chứa tới mười bản, và
+  // đoán hộ ở đó là đoán xem người dùng định cài bản nào.
+  edition: "",
 };
 
 /** Ổ nhỏ hơn mức này không chứa nổi bộ cài Windows. */

@@ -235,6 +235,12 @@ export interface UnattendConfig {
   skip_oobe: boolean;
   bypass_requirements: boolean;
   arch: string;
+  /**
+   * Tên bản Windows trong `install.wim` sẽ được cài, vd `Windows 11 Pro`.
+   * Chuỗi rỗng nghĩa là không chọn hộ — Setup vẫn hiện bảng chọn như thường.
+   * Giá trị phải khớp nguyên văn một mục trong `IsoInfo.editions`.
+   */
+  edition: string;
 }
 
 export interface WriteRequest {
