@@ -412,6 +412,67 @@ body::before {
   color: var(--text); width: 100%; user-select: text;
 }
 
+/* ------------------------------------------------ Ô chọn
+
+   Thay cho `<select>` gốc: danh sách xổ ra của nó do WebView2 vẽ chứ không phải
+   trang web, nên CSS ở đây không với tới được và nó luôn là một bảng trắng
+   vuông vức lạc khỏi phần còn lại. Bảng dưới đây nằm trong portal ra `body`,
+   vì `.main__scroll` có `overflow-y: auto` sẽ cắt mất nó. */
+
+.select { position: relative; }
+
+.select__trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  text-align: left; cursor: pointer; user-select: none;
+}
+.select__trigger:hover:not(:disabled) { background: var(--glass); border-color: var(--border-hi); }
+.select__trigger:disabled { opacity: 0.55; cursor: default; }
+
+.select__value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Mũi tên vẽ bằng hai cạnh của một hình vuông xoay 45°, khỏi kéo thêm icon. */
+.select__chev {
+  flex: none; width: 7px; height: 7px; margin-top: -3px;
+  border-right: 1.5px solid var(--text-faint);
+  border-bottom: 1.5px solid var(--text-faint);
+  transform: rotate(45deg);
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+.select__chev[data-open="true"] { transform: rotate(-135deg); margin-top: 2px; }
+.select__trigger:hover:not(:disabled) .select__chev { border-color: var(--text-dim); }
+
+.select__menu {
+  position: fixed; z-index: 40;
+  max-height: 264px; overflow-y: auto;
+  padding: 5px; border-radius: 11px;
+  border: 1px solid var(--border-hi);
+  /* Nền phải đục hơn các tấm kính khác: sau lưng nó là nội dung trang chứ
+     không phải nền ứng dụng, và chữ trên chữ thì không đọc được. */
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(34px) saturate(175%);
+  -webkit-backdrop-filter: blur(34px) saturate(175%);
+  box-shadow: var(--shadow);
+  animation: select-in 0.13s ease-out;
+}
+
+@keyframes select-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.select__opt {
+  display: block; width: 100%; text-align: left;
+  font: inherit; font-size: 13px;
+  padding: 7px 10px; border-radius: 7px;
+  border: 0; background: transparent; color: var(--text-dim);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.select__opt[data-active="true"] { background: var(--glass-hi); color: var(--text); }
+.select__opt[data-on="true"] { color: var(--text); font-weight: 600; }
+.select__opt[data-on="true"][data-active="true"] {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
 /* ------------------------------------------------ Đường khởi động */
 
 .bootway {

@@ -1,6 +1,7 @@
 /** Các mảnh giao diện dùng lại nhiều nơi. */
 
-import { useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { pct as fmtPct } from "../lib/format";
 
@@ -93,6 +94,199 @@ export function Fold({
       </summary>
       <div className="fold__body">{children}</div>
     </details>
+  );
+}
+
+export interface Option {
+  value: string;
+  label: string;
+}
+
+/**
+ * Ô chọn thay cho `<select>` gốc.
+ *
+ * Danh sách xổ ra của `<select>` gốc do WebView2 vẽ, không phải trang web — CSS
+ * của ứng dụng không với tới được nó. Nên dù ô đóng có kiểu dáng kính đúng như
+ * phần còn lại, vừa bấm mở ra là hiện một bảng trắng vuông vức của hệ điều
+ * hành, lạc hẳn khỏi mọi thứ quanh nó.
+ *
+ * Bảng chọn phải nằm trong một **portal ra thẳng `body`**, không phải cạnh ô.
+ * `.main__scroll` có `overflow-y: auto`, nên một bảng đặt trong luồng sẽ bị cắt
+ * ở mép khối cuộn, và cuộn trang thì nó trôi theo. Đổi lại, vị trí phải tự đo:
+ * `position: fixed` theo toạ độ của ô, lật lên trên khi phía dưới không đủ chỗ.
+ *
+ * Cuộn hay đổi cỡ cửa sổ thì đóng lại thay vì đo lại liên tục — bảng chọn là
+ * thứ tồn tại vài giây, và đóng nó đi rẻ hơn nhiều so với việc bám đuổi một ô
+ * đang chạy khỏi nó.
+ */
+export function Select({
+  value,
+  onChange,
+  options,
+  disabled,
+  label,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: Option[];
+  disabled?: boolean;
+  /** Nhãn cho trình đọc màn hình, vì ô này không phải `<select>` thật. */
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const [box, setBox] = useState<{ left: number; top: number; width: number; drop: boolean } | null>(null);
+
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  const current = options.find((o) => o.value === value);
+
+  // Đo ngay trước khi trình duyệt vẽ, để bảng không nhấp nháy ở vị trí cũ.
+  useLayoutEffect(() => {
+    if (!open) return setBox(null);
+    const el = trigger.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    // Đủ chỗ bên dưới thì xổ xuống; không thì lật lên trên. Ngưỡng lấy theo
+    // chiều cao tối đa của bảng cộng khoảng hở, chứ không phải một nửa màn
+    // hình: ô nằm hơi dưới giữa vẫn xổ xuống được nếu còn đủ chỗ.
+    const drop = below >= 240 || below >= r.top;
+    setBox({ left: r.left, top: drop ? r.bottom + 6 : r.top - 6, width: r.width, drop });
+  }, [open]);
+
+  // Mở ra là con trỏ nằm sẵn ở mục đang chọn, không phải ở đầu danh sách: với
+  // danh sách mười mấy bản Windows, bắt đầu từ đầu nghĩa là mỗi lần mở lại phải
+  // dò lại từ đầu.
+  useEffect(() => {
+    if (open) setActive(Math.max(0, options.findIndex((o) => o.value === value)));
+  }, [open, options, value]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!menu.current?.contains(t) && !trigger.current?.contains(t)) setOpen(false);
+    };
+    const onLeave = () => setOpen(false);
+
+    // `true` để bắt được cả cuộn bên trong `.main__scroll`, vì sự kiện scroll
+    // không nổi bọt lên window.
+    document.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("scroll", onLeave, true);
+    window.addEventListener("resize", onLeave);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("scroll", onLeave, true);
+      window.removeEventListener("resize", onLeave);
+    };
+  }, [open]);
+
+  // Giữ mục đang trỏ luôn nằm trong tầm nhìn khi đi bằng bàn phím.
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLElement>('[data-active="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [open, active]);
+
+  const pick = (v: string) => {
+    onChange(v);
+    setOpen(false);
+    trigger.current?.focus();
+  };
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (disabled) return;
+
+    if (!open) {
+      if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(e.key)) {
+        e.preventDefault();
+        setOpen(true);
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case "Escape":
+        e.preventDefault();
+        setOpen(false);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (options[active]) pick(options[active].value);
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        setActive((i) => Math.min(options.length - 1, i + 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setActive((i) => Math.max(0, i - 1));
+        break;
+      case "Home":
+        e.preventDefault();
+        setActive(0);
+        break;
+      case "End":
+        e.preventDefault();
+        setActive(options.length - 1);
+        break;
+    }
+  };
+
+  return (
+    <div className="select">
+      <button
+        ref={trigger}
+        type="button"
+        className="field select__trigger"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={onKey}
+      >
+        <span className="select__value">{current?.label ?? ""}</span>
+        <span className="select__chev" aria-hidden="true" data-open={open} />
+      </button>
+
+      {open && box &&
+        createPortal(
+          <div
+            ref={menu}
+            className="select__menu"
+            role="listbox"
+            style={{
+              left: box.left,
+              width: box.width,
+              ...(box.drop ? { top: box.top } : { bottom: window.innerHeight - box.top }),
+            }}
+            onKeyDown={onKey}
+          >
+            {options.map((o, i) => (
+              <button
+                key={o.value}
+                type="button"
+                role="option"
+                aria-selected={o.value === value}
+                className="select__opt"
+                data-active={i === active}
+                data-on={o.value === value}
+                onPointerEnter={() => setActive(i)}
+                onClick={() => pick(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </div>
   );
 }
 

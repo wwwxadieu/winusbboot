@@ -6,7 +6,7 @@ import type {
   WriteProgress,
 } from "../types";
 import { bytes, pct, rateLine } from "../lib/format";
-import { Fold, Note, Panel, Progress, Why } from "./ui";
+import { Fold, Note, Panel, Progress, Select, Why } from "./ui";
 
 const STAGE_NAME: Record<string, string> = {
   check: "Kiểm tra an toàn",
@@ -343,11 +343,16 @@ export function StepWrite({
                   lại bảng chọn giữa lúc cài mà không nói vì sao. */}
               <Field label="PHIÊN BẢN WINDOWS">
                 {iso.editions.length ? (
-                  <select style={fieldStyle} disabled={running} value={unattend.edition}
-                          onChange={(e) => set("edition", e.target.value)}>
-                    <option value="">Hỏi khi cài</option>
-                    {iso.editions.map((e) => <option key={e} value={e}>{e}</option>)}
-                  </select>
+                  <Select
+                    label="Phiên bản Windows"
+                    disabled={running}
+                    value={unattend.edition}
+                    onChange={(v) => set("edition", v)}
+                    options={[
+                      { value: "", label: "Hỏi khi cài" },
+                      ...iso.editions.map((e) => ({ value: e, label: e })),
+                    ]}
+                  />
                 ) : (
                   <div style={{ ...fieldStyle, opacity: 0.75 }}>
                     Không đọc được <span style={{ color: "var(--text-faint)" }}>· Setup sẽ hỏi</span>
@@ -365,26 +370,30 @@ export function StepWrite({
               </Field>
 
               <Field label="ĐỊNH DẠNG VÙNG">
-                <select style={fieldStyle} disabled={running} value={unattend.locale}
-                        onChange={(e) => {
-                          const l = languages.find((x) => x.locale === e.target.value);
-                          onUnattend({
-                            ...unattend,
-                            locale: e.target.value,
-                            keyboard: l?.keyboard ?? unattend.keyboard,
-                          });
-                        }}>
-                  {languages.map((l) => (
-                    <option key={l.locale} value={l.locale}>{l.label}</option>
-                  ))}
-                </select>
+                <Select
+                  label="Định dạng vùng"
+                  disabled={running}
+                  value={unattend.locale}
+                  onChange={(v) => {
+                    const l = languages.find((x) => x.locale === v);
+                    onUnattend({
+                      ...unattend,
+                      locale: v,
+                      keyboard: l?.keyboard ?? unattend.keyboard,
+                    });
+                  }}
+                  options={languages.map((l) => ({ value: l.locale, label: l.label }))}
+                />
               </Field>
 
               <Field label="MÚI GIỜ">
-                <select style={fieldStyle} disabled={running} value={unattend.timezone}
-                        onChange={(e) => set("timezone", e.target.value)}>
-                  {TZ.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-                </select>
+                <Select
+                  label="Múi giờ"
+                  disabled={running}
+                  value={unattend.timezone}
+                  onChange={(v) => set("timezone", v)}
+                  options={TZ.map((t) => ({ value: t.id, label: t.label }))}
+                />
               </Field>
 
               <Field label="TÊN MÁY TÍNH">

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type {
   Candidate, CatalogOrigin, Recommendation, SetupLanguage, Verdict,
 } from "../types";
-import { Empty, Fold, Note, Panel, Why } from "./ui";
+import { Empty, Fold, Note, Panel, Select, Why } from "./ui";
 
 const ORIGIN_LABEL: Record<CatalogOrigin, string> = {
   live: "Vừa đọc từ trang của Microsoft",
@@ -204,15 +204,12 @@ export function StepRecommend({
           <div className="stat">
             <div className="stat__k">Ngôn ngữ</div>
             <div style={{ marginTop: 5 }}>
-              <select
-                className="field"
+              <Select
+                label="Ngôn ngữ bộ cài"
                 value={language}
-                onChange={(e) => onLanguage(e.target.value)}
-              >
-                {isoLangs.map((l) => (
-                  <option key={l.locale} value={l.ms_name}>{l.label}</option>
-                ))}
-              </select>
+                onChange={onLanguage}
+                options={isoLangs.map((l) => ({ value: l.ms_name, label: l.label }))}
+              />
             </div>
             <div className="stat__note">{chosenLang?.locale ?? ""}</div>
           </div>
