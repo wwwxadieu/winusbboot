@@ -81,11 +81,52 @@ pub fn managed_dir() -> std::path::PathBuf {
 /// dùng đã tự tải về từ trước". So sau khi chuẩn hoá cả hai đường dẫn, nên
 /// `..` hay dấu phân cách khác kiểu đều không lách qua được.
 pub fn is_managed(path: &std::path::Path) -> bool {
-    let dir = managed_dir();
-    // canonicalize() chỉ chạy được với đường dẫn có thật; file đã xoá rồi thì
-    // lùi về so sánh dạng thô.
-    let norm = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    norm(path).starts_with(norm(&dir))
+    normalized(path).starts_with(normalized(&managed_dir()))
+}
+
+/// Đưa đường dẫn về một dạng so sánh được, kể cả khi file chưa hoặc không còn
+/// tồn tại.
+///
+/// `canonicalize()` giải hết symlink và cho ra đường dẫn tuyệt đối, nhưng chỉ
+/// chạy được với đường dẫn có thật — và trên Windows nó còn trả về dạng
+/// verbatim `\\?\C:\...`. Nên cách chuẩn hoá "canonicalize được thì dùng,
+/// không thì giữ nguyên dạng thô" chứa sẵn một cái bẫy: khi thư mục quản lý
+/// *có* trên đĩa còn file thì *không*, hai vế của phép so rơi vào hai dạng
+/// khác nhau — `\\?\C:\…\iso` đọ với `C:\…\iso\x.iso` — và `starts_with` luôn
+/// trượt.
+///
+/// Hệ quả là `discard()` từ chối xoá đúng file mà chính nó vừa tải về, với lý
+/// do "file này là của bạn". Lỗi chỉ hiện ra khi thư mục quản lý đã tồn tại,
+/// nên máy người dùng thật thì dính còn runner CI mới tinh thì không — đó là
+/// lý do nó nằm im được lâu đến vậy.
+///
+/// Cách sửa: canonicalize **tổ tiên gần nhất còn tồn tại**, rồi nối lại phần
+/// đuôi chưa tồn tại. Thư mục quản lý và file nằm trong nó vì thế luôn được
+/// đưa về cùng một dạng, bất kể file còn trên đĩa hay không.
+fn normalized(path: &std::path::Path) -> std::path::PathBuf {
+    // Các thành phần đã lùi qua, xếp từ trong ra ngoài.
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut head = path.to_path_buf();
+
+    loop {
+        if let Ok(mut out) = head.canonicalize() {
+            for part in tail.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+
+        // Không còn tổ tiên nào để lùi tiếp. Giữ nguyên đường dẫn thô: nó sẽ
+        // không khớp tiền tố nào, và với một hàng rào xoá file thì "không nhận
+        // ra" phải nghiêng về từ chối, không phải cho qua.
+        let Some(name) = head.file_name().map(|n| n.to_os_string()) else {
+            return path.to_path_buf();
+        };
+        tail.push(name);
+        if !head.pop() {
+            return path.to_path_buf();
+        }
+    }
 }
 
 /// Xoá file ISO ứng dụng đã tải, sau khi ghi xong USB.
@@ -1042,10 +1083,40 @@ mod discard_tests {
         }
     }
 
+    /// Thư mục quản lý phải *có thật* thì test này mới kiểm được thứ nó định
+    /// kiểm. Thiếu dòng này, cả nó lẫn `discarding_an_already_gone_file…` đều
+    /// xanh trên runner CI vì lý do sai: chưa có thư mục thì cả hai vế của phép
+    /// so đều không canonicalize được, nên hai dạng vô tình khớp nhau. Máy
+    /// người dùng thật — nơi thư mục đã tồn tại — mới lộ ra lỗi.
+    fn ensure_managed_dir() {
+        std::fs::create_dir_all(managed_dir()).expect("phải tạo được thư mục quản lý");
+    }
+
     #[test]
     fn a_file_the_app_downloaded_is_recognised() {
+        ensure_managed_dir();
         let inside = managed_dir().join("ubuntu-24.04.3-desktop-amd64.iso");
         assert!(is_managed(&inside));
+    }
+
+    /// Đúng cảnh từng làm hỏng `discard()`: thư mục thì có trên đĩa, file thì
+    /// không. Hai vế phải được chuẩn hoá về cùng một dạng, nếu không phép so
+    /// tiền tố trượt và ứng dụng từ chối xoá chính file nó vừa tải.
+    ///
+    /// Dùng thư mục tạm riêng thay vì thư mục quản lý để tính chất này được
+    /// khoá độc lập với biến môi trường `LOCALAPPDATA`.
+    #[test]
+    fn a_missing_file_normalizes_under_its_existing_parent() {
+        let dir = std::env::temp_dir().join("getwinusb-test-normalized");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let gone = dir.join("khong-ton-tai-12345.iso");
+        assert!(!gone.exists(), "test này cần một file không tồn tại");
+
+        let (a, b) = (normalized(&gone), normalized(&dir));
+        assert!(a.starts_with(&b), "{} phải nằm dưới {}", a.display(), b.display());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Thư mục cha trùng tiền tố nhưng không phải thư mục quản lý thì không
@@ -1063,8 +1134,23 @@ mod discard_tests {
     /// đã tự xoá tay. Không được coi là lỗi.
     #[test]
     fn discarding_an_already_gone_file_is_not_an_error() {
+        ensure_managed_dir();
         let gone = managed_dir().join("khong-ton-tai-12345.iso");
         assert_eq!(discard(&gone).unwrap(), false);
+    }
+
+    /// Lùi tổ tiên để chuẩn hoá không được nới rộng hàng rào: một đường dẫn
+    /// nằm ngoài thư mục quản lý vẫn phải bị từ chối kể cả khi phần đầu của nó
+    /// có thật trên đĩa — đó chính là trường hợp mà cách chuẩn hoá mới đụng tới.
+    #[test]
+    fn walking_up_to_a_real_parent_does_not_widen_the_fence() {
+        ensure_managed_dir();
+        let outside = managed_dir()
+            .parent().unwrap()
+            .join("khong-phai-iso")
+            .join("Win11.iso");
+        assert!(!is_managed(&outside), "{} nằm ngoài thư mục quản lý", outside.display());
+        assert_eq!(discard(&outside).unwrap_err().code, "not_managed");
     }
 }
 
