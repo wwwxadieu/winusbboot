@@ -170,17 +170,27 @@ export function Select({
       const t = e.target as Node;
       if (!menu.current?.contains(t) && !trigger.current?.contains(t)) setOpen(false);
     };
-    const onLeave = () => setOpen(false);
+    // Cuộn *trang* thì đóng bảng, vì bảng đứng yên một chỗ trong khi ô đã chạy
+    // đi mất. Nhưng cuộn *trong chính bảng* thì không được đóng: danh sách dài
+    // hơn `max-height` có thanh cuộn riêng, và vì phải nghe ở pha bắt (sự kiện
+    // scroll không nổi bọt lên window, nếu không thì cuộn trong `.main__scroll`
+    // sẽ lọt) nên sự kiện của chính bảng cũng tới đây. Đóng bảng ngay khi người
+    // dùng vừa lăn chuột để đọc tiếp là hỏng đúng thứ mà thanh cuộn sinh ra để
+    // làm — với danh sách mười mấy bản Windows thì đó là mọi lần dùng.
+    const onScroll = (e: Event) => {
+      const t = e.target as Node;
+      if (menu.current && (menu.current === t || menu.current.contains(t))) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
 
-    // `true` để bắt được cả cuộn bên trong `.main__scroll`, vì sự kiện scroll
-    // không nổi bọt lên window.
     document.addEventListener("pointerdown", onPointer, true);
-    window.addEventListener("scroll", onLeave, true);
-    window.addEventListener("resize", onLeave);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("pointerdown", onPointer, true);
-      window.removeEventListener("scroll", onLeave, true);
-      window.removeEventListener("resize", onLeave);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
 
