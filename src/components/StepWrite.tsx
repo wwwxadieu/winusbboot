@@ -164,6 +164,16 @@ export function StepWrite({
     if (unattend.arch !== arch) onUnattend({ ...unattend, arch });
   }, [iso, unattend, onUnattend]);
 
+  // Đổi sang file ISO khác thì bản đã chọn có thể không có trong ảnh đĩa mới.
+  // Giữ lại một cái tên không khớp ảnh nào là để giao diện nói đã chọn xong
+  // trong khi Setup sẽ hiện lại bảng chọn giữa lúc cài — xoá ngay tại đây, lúc
+  // người dùng còn nhìn thấy và còn sửa được.
+  useEffect(() => {
+    if (unattend.edition && !iso?.editions.includes(unattend.edition)) {
+      onUnattend({ ...unattend, edition: "" });
+    }
+  }, [iso, unattend, onUnattend]);
+
   const set = <K extends keyof UnattendConfig>(k: K, v: UnattendConfig[K]) =>
     onUnattend({ ...unattend, [k]: v });
 
@@ -294,7 +304,12 @@ export function StepWrite({
           <div className="stat">
             <div className="stat__k">Bộ cài</div>
             <div className="stat__v" style={{ fontSize: 13 }}>{iso.path.split(/[\\/]/).pop()}</div>
-            <div className="stat__note">{bytes(iso.size)}</div>
+            {/* Bản đã chọn chỉ có tác dụng khi file trả lời được ghi ra, nên
+                chỉ nhắc lại ở đây khi cả hai điều kiện cùng đúng. */}
+            <div className="stat__note">
+              {bytes(iso.size)}
+              {unattend.enabled && unattend.edition && ` · ${unattend.edition}`}
+            </div>
           </div>
           <div className="stat">
             <div className="stat__k">Phân vùng</div>
@@ -319,6 +334,27 @@ export function StepWrite({
         {unattend.enabled && (
           <>
             <div className="grid grid--3" style={{ marginTop: 14 }}>
+              {/* Bản nào trong install.wim sẽ được cài. Một ISO multi-edition
+                  chứa tới mười bản, và không chọn ở đây thì Setup dừng lại hỏi
+                  — tức là mất đúng thứ mà bước này sinh ra để tránh.
+
+                  Đọc không ra danh sách thì hiện ô khoá thay vì để người dùng
+                  gõ tay: Setup so tên nguyên văn, gõ sai một ký tự là nó hiện
+                  lại bảng chọn giữa lúc cài mà không nói vì sao. */}
+              <Field label="PHIÊN BẢN WINDOWS">
+                {iso.editions.length ? (
+                  <select style={fieldStyle} disabled={running} value={unattend.edition}
+                          onChange={(e) => set("edition", e.target.value)}>
+                    <option value="">Hỏi khi cài</option>
+                    {iso.editions.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ ...fieldStyle, opacity: 0.75 }}>
+                    Không đọc được <span style={{ color: "var(--text-faint)" }}>· Setup sẽ hỏi</span>
+                  </div>
+                )}
+              </Field>
+
               {/* Ngôn ngữ hiển thị không chọn được ở đây: nó bị khoá bởi ngôn
                   ngữ của file ISO. Đặt một ngôn ngữ không có trong ảnh đĩa thì
                   Windows Setup bỏ qua cả file trả lời. */}

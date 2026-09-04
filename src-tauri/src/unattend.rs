@@ -48,6 +48,16 @@ pub struct UnattendConfig {
     pub bypass_requirements: bool,
     /// `amd64` hoặc `arm64` — phải khớp với bộ cài, sai là Setup bỏ qua cả file.
     pub arch: String,
+    /// Tên bản Windows trong `install.wim` sẽ được cài, vd `Windows 11 Pro`.
+    ///
+    /// Để trống nghĩa là **không chọn hộ** — Setup hiện bảng chọn như bình
+    /// thường. Đây là mặc định, vì một ISO multi-edition có thể chứa tới mười
+    /// bản và đoán hộ ở đó là đoán xem người dùng muốn cài bản nào.
+    ///
+    /// Giá trị phải khớp *nguyên văn* một mục trong `IsoInfo.editions`, vốn do
+    /// `Get-WindowsImage` đọc thẳng từ chính file ISO đó — nên không có chuyện
+    /// tên ở đây và tên trong ảnh đĩa lệch nhau.
+    pub edition: String,
 }
 
 impl Default for UnattendConfig {
@@ -65,6 +75,8 @@ impl Default for UnattendConfig {
             skip_oobe: true,
             bypass_requirements: false,
             arch: "amd64".into(),
+            // Không chọn hộ bản Windows: mặc định là Setup vẫn hỏi.
+            edition: String::new(),
         }
     }
 }
@@ -133,6 +145,41 @@ pub fn generate(cfg: &UnattendConfig) -> Option<String> {
     ));
 
     xml.push_str(&format!("    <component {}>\r\n", attrs("Microsoft-Windows-Setup", arch)));
+
+    // Chọn sẵn bản Windows nào trong install.wim sẽ được cài.
+    //
+    // `ImageInstall` gộp hai thứ khác hẳn nhau về mức nguy hiểm, và chỉ một
+    // nửa của nó được sinh ra ở đây:
+    //
+    // - `InstallFrom` chọn **ảnh nào** trong install.wim. Sai thì cùng lắm là
+    //   cài nhầm bản Home thay vì Pro — cài lại được.
+    // - `InstallTo` chọn **ổ đích nào**. Có nó thì Setup ghi đè lên đúng phân
+    //   vùng mà file này chỉ định, không hỏi lại lần nào. Đó chính là loại rủi
+    //   ro mà `DiskConfiguration` mang lại và là lý do file này không có nó.
+    //
+    // Nên chỉ `InstallFrom` được sinh ra; người dùng vẫn tự chọn ổ và phân
+    // vùng như bình thường. Có test khoá lại điều này.
+    //
+    // `WillShowUI=OnError` giữ đường lui: nếu tên không khớp ảnh nào trong ISO
+    // — người dùng đổi sang file ISO khác chẳng hạn — Setup hiện lại bảng chọn
+    // thay vì dừng giữa chừng với một lỗi mà không ai đọc được nguyên nhân.
+    if !cfg.edition.trim().is_empty() {
+        xml.push_str(&format!(
+            "      <ImageInstall>\r\n\
+             \x20       <OSImage>\r\n\
+             \x20         <InstallFrom>\r\n\
+             \x20           <MetaData wcm:action=\"add\">\r\n\
+             \x20             <Key>/IMAGE/NAME</Key>\r\n\
+             \x20             <Value>{}</Value>\r\n\
+             \x20           </MetaData>\r\n\
+             \x20         </InstallFrom>\r\n\
+             \x20         <WillShowUI>OnError</WillShowUI>\r\n\
+             \x20       </OSImage>\r\n\
+             \x20     </ImageInstall>\r\n",
+            esc(cfg.edition.trim())
+        ));
+    }
+
     xml.push_str("      <UserData><AcceptEula>true</AcceptEula></UserData>\r\n");
 
     if cfg.bypass_requirements {
@@ -435,11 +482,78 @@ mod tests {
     fn no_disk_configuration_is_ever_emitted() {
         // Hàng rào an toàn: có DiskConfiguration thì Setup tự xoá ổ cứng đích mà
         // không hỏi. Không bao giờ được sinh ra, kể cả khi thêm tính năng sau này.
+        //
+        // Chạy với cả hai trạng thái của bộ chọn phiên bản: khối `ImageInstall`
+        // do nó sinh ra là chỗ gần `InstallTo` nhất trong cả file, nên đó chính
+        // là chỗ một lần mở rộng sau này dễ vô tình kéo ổ đích vào nhất.
+        for edition in ["", "Windows 11 Pro"] {
+            let mut c = cfg();
+            c.bypass_requirements = true;
+            c.edition = edition.into();
+            let xml = generate(&c).unwrap();
+            assert!(!xml.contains("DiskConfiguration"), "edition = {edition:?}");
+            assert!(!xml.contains("WillWipeDisk"), "edition = {edition:?}");
+            // `InstallTo` là nửa nguy hiểm của ImageInstall: nó chỉ định phân
+            // vùng đích, và có nó thì Setup ghi đè không hỏi lại.
+            assert!(!xml.contains("InstallTo"), "edition = {edition:?}");
+        }
+    }
+
+    /// Chọn phiên bản là chọn **ảnh nào trong install.wim**, và Setup đọc lựa
+    /// chọn đó qua đúng một cặp khoá/giá trị.
+    #[test]
+    fn the_chosen_edition_becomes_an_image_name_metadata() {
         let mut c = cfg();
-        c.bypass_requirements = true;
+        c.edition = "Windows 11 Pro".into();
         let xml = generate(&c).unwrap();
-        assert!(!xml.contains("DiskConfiguration"));
-        assert!(!xml.contains("WillWipeDisk"));
+
+        assert!(well_formed(&xml), "file phải đóng đủ thẻ");
+        assert!(xml.contains("<Key>/IMAGE/NAME</Key>"));
+        assert!(xml.contains("<Value>Windows 11 Pro</Value>"));
+        // Khối phải nằm ở pass windowsPE — đó là pass duy nhất chạy trước khi
+        // Setup hỏi cài bản nào. Đặt ở specialize thì câu hỏi đã trôi qua rồi.
+        let pe = xml.split("pass=\"specialize\"").next().unwrap();
+        assert!(pe.contains("<ImageInstall>"), "ImageInstall phải ở trong windowsPE");
+    }
+
+    /// Không chọn gì thì Setup vẫn hỏi. Sinh ra một `ImageInstall` rỗng sẽ
+    /// khiến Setup dừng vì không biết cài ảnh nào — tệ hơn hẳn việc để nó hỏi.
+    #[test]
+    fn no_edition_means_setup_still_asks() {
+        let xml = generate(&cfg()).unwrap();
         assert!(!xml.contains("ImageInstall"));
+        assert!(!xml.contains("/IMAGE/NAME"));
+    }
+
+    /// Khoảng trắng thừa quanh tên là lỗi sao chép thường gặp, và Setup so tên
+    /// nguyên văn nên `" Windows 11 Pro "` sẽ không khớp ảnh nào.
+    #[test]
+    fn the_edition_name_is_trimmed_and_escaped() {
+        let mut c = cfg();
+        c.edition = "  Windows 11 Pro  ".into();
+        assert!(generate(&c).unwrap().contains("<Value>Windows 11 Pro</Value>"));
+
+        // Tên bản do ISO khai, không phải hằng số trong mã nguồn — một dấu `&`
+        // lọt vào là cả file hỏng cú pháp và Setup bỏ qua toàn bộ.
+        c.edition = "Windows 10 Home & Pro".into();
+        let xml = generate(&c).unwrap();
+        assert!(xml.contains("<Value>Windows 10 Home &amp; Pro</Value>"));
+        assert!(well_formed(&xml));
+    }
+
+    /// Chỉ chọn ảnh thì không kéo theo quyền gì thêm: bộ chọn phiên bản không
+    /// được làm thay đổi phần còn lại của file.
+    #[test]
+    fn choosing_an_edition_changes_nothing_else() {
+        let without = generate(&cfg()).unwrap();
+        let mut c = cfg();
+        c.edition = "Windows 11 Pro".into();
+        let with = generate(&c).unwrap();
+
+        let stripped = with
+            .split_once("      <ImageInstall>")
+            .and_then(|(head, rest)| rest.split_once("      </ImageInstall>\r\n").map(|(_, tail)| format!("{head}{tail}")))
+            .expect("khối ImageInstall phải nằm gọn một chỗ");
+        assert_eq!(stripped, without, "chỉ được thêm đúng khối ImageInstall");
     }
 }
