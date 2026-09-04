@@ -1,0 +1,18 @@
+# Vì sao file này tồn tại
+#
+# Trên Windows `core.autocrlf=true` khiến git ghi CRLF xuống đĩa mỗi lần lấy file
+# ra, trong khi cargo, tauri và npm ghi lại các file chúng tự sinh bằng LF. Sau
+# mỗi lần build, git vì thế báo `Cargo.toml`, `package.json`, `Cargo.lock` và hai
+# file `gen/schemas/*.json` là "đã sửa" dù không khác một ký tự nội dung nào.
+#
+# Đó không phải phiền toái thẩm mỹ: nó đã một lần chặn `git pull` giữa chừng, và
+# nó luôn chực lọt vào một commit chẳng liên quan gì tới nó.
+#
+# Mọi blob văn bản trong repo này vốn đã là LF, nên khai LF cho cả bản làm việc là
+# nói rõ điều đang có chứ không phải chuyển đổi gì: không blob nào đổi, chỉ hết
+# chuyện git và công cụ build ghi hai kiểu khác nhau xuống cùng một chỗ.
+* text=auto eol=lf
+
+# Ảnh và icon là nhị phân — để git "sửa dòng" trong đó là hỏng file.
+*.png binary
+*.ico binary
